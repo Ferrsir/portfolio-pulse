@@ -1,10 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-} from "react";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { X, Info, TriangleAlert, CircleAlert } from "lucide-react";
 import { percent, tone } from "./format";
@@ -68,7 +62,9 @@ export function Delta({
   value: number | null | undefined;
   children?: ReactNode;
 }) {
-  return <span className={`delta ${tone(value)}`}>{children ?? percent(value)}</span>;
+  return (
+    <span className={`delta ${tone(value)}`}>{children ?? percent(value)}</span>
+  );
 }
 export function Stat({
   label,
@@ -84,7 +80,9 @@ export function Stat({
   return (
     <div className="stat">
       <span className="stat-label">{label}</span>
-      <strong className={`stat-value ${valueTone === undefined ? "" : tone(valueTone)}`}>
+      <strong
+        className={`stat-value ${valueTone === undefined ? "" : tone(valueTone)}`}
+      >
         {value}
       </strong>
       {sub && <span className="stat-sub">{sub}</span>}
@@ -119,14 +117,22 @@ export function Notice({
   action?: ReactNode;
   onDismiss?: () => void;
 }) {
-  const Icon = kind === "info" ? Info : kind === "warn" ? TriangleAlert : CircleAlert;
+  const Icon =
+    kind === "info" ? Info : kind === "warn" ? TriangleAlert : CircleAlert;
   return (
-    <div className={`notice ${kind}`} role={kind === "error" ? "alert" : "status"}>
+    <div
+      className={`notice ${kind}`}
+      role={kind === "error" ? "alert" : "status"}
+    >
       <Icon size={16} aria-hidden />
       <div className="notice-text">{children}</div>
       {action}
       {onDismiss && (
-        <button className="icon-button" aria-label="Dismiss" onClick={onDismiss}>
+        <button
+          className="icon-button"
+          aria-label="Dismiss"
+          onClick={onDismiss}
+        >
           <X size={15} />
         </button>
       )}
@@ -192,10 +198,12 @@ export function Modal({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null),
-    close = useRef(onClose);
+    close = useRef(onClose),
+    // Captured on the first render, before any field inside takes focus.
+    opener = useRef(document.activeElement as HTMLElement | null);
   close.current = onClose;
   useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
+    const previous = opener.current;
     const first = ref.current?.querySelector<HTMLElement>(
       "[autofocus], input, select, button:not(.icon-button)",
     );
@@ -247,7 +255,11 @@ export function Modal({
             <h2 id="modal-title">{title}</h2>
             {description && <p>{description}</p>}
           </div>
-          <button className="icon-button" aria-label="Close dialog" onClick={onClose}>
+          <button
+            className="icon-button"
+            aria-label="Close dialog"
+            onClick={onClose}
+          >
             <X size={18} />
           </button>
         </header>

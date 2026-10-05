@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Plus, Trash2, LoaderCircle } from "lucide-react";
 import type { Portfolio } from "../shared/types";
@@ -74,7 +74,8 @@ export function PortfolioEditor({
     // The revision these values were copied from; saving over a newer one would undo it.
     [baseRevision] = useState(portfolio.revision);
   const stale = portfolio.revision !== baseRevision;
-  const setRow = (i: number, key: keyof Row, value: string) =>
+  const setRow = (i: number, key: keyof Row, value: string) => {
+    setProblems([]);
     setRows((list) =>
       list.map((r, j) =>
         i === j
@@ -82,6 +83,18 @@ export function PortfolioEditor({
           : r,
       ),
     );
+  };
+  // A new row is focused (and scrolled into view on small screens).
+  const [focusRow, setFocusRow] = useState(-1);
+  useEffect(() => {
+    if (focusRow < 0) return;
+    const input = document.querySelector<HTMLInputElement>(
+      `input[aria-label="Row ${focusRow + 1} symbol"]`,
+    );
+    input?.focus();
+    input?.scrollIntoView({ block: "center" });
+    setFocusRow(-1);
+  }, [focusRow]);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const found = editorProblems(balances, rows);
@@ -153,9 +166,10 @@ export function PortfolioEditor({
                     inputMode="decimal"
                     step="any"
                     value={balances[key]}
-                    onChange={(e) =>
-                      setBalances((b) => ({ ...b, [key]: e.target.value }))
-                    }
+                    onChange={(e) => {
+                      setProblems([]);
+                      setBalances((b) => ({ ...b, [key]: e.target.value }));
+                    }}
                   />
                 </span>
                 <small>{hint}</small>
@@ -170,12 +184,13 @@ export function PortfolioEditor({
             <button
               type="button"
               className="button ghost small"
-              onClick={() =>
+              onClick={() => {
                 setRows((r) => [
                   ...r,
                   { symbol: "", shares: "", costBasis: "" },
-                ])
-              }
+                ]);
+                setFocusRow(rows.length);
+              }}
             >
               <Plus size={14} aria-hidden /> Add holding
             </button>
@@ -211,6 +226,9 @@ export function PortfolioEditor({
                       onChange={(e) => setRow(i, "shares", e.target.value)}
                     />
                     <span className="cost-cell">
+                      <span className="cell-label" aria-hidden>
+                        Total cost basis
+                      </span>
                       <span className="with-unit">
                         <i>$</i>
                         <input
@@ -332,7 +350,6 @@ export function SymbolDialog({
           <label className="field">
             <span>Ticker</span>
             <input
-              autoFocus
               placeholder="AMZN"
               value={symbol}
               maxLength={12}
@@ -435,7 +452,6 @@ export function AccountDialog({
           <label className="field">
             <span>Username</span>
             <input
-              autoFocus
               autoComplete="username"
               autoCapitalize="none"
               spellCheck={false}
@@ -491,7 +507,12 @@ export function AccountDialog({
           {error && <Notice kind="error">{error}</Notice>}
         </div>
         <footer className="modal-foot">
-          <button type="button" className="button" onClick={onClose} disabled={Boolean(busy)}>
+          <button
+            type="button"
+            className="button"
+            onClick={onClose}
+            disabled={Boolean(busy)}
+          >
             Cancel
           </button>
           <button

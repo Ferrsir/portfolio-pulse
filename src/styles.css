@@ -11,7 +11,7 @@
   --border-strong: #cdd3dc;
   --text: #11151b;
   --text-2: #464f5d;
-  --text-3: #687282;
+  --text-3: #5f6876;
   --accent: #2f55d4;
   --accent-hover: #2546b8;
   --accent-ink: #ffffff;
@@ -936,6 +936,7 @@ input[type="range"] {
   min-width: 72px;
   text-align: right;
   color: var(--text-3);
+  font-size: 12px;
 }
 .legend.inline {
   display: flex;
@@ -1430,6 +1431,12 @@ a.news-title svg {
   color: var(--text-3);
   font-size: 12px;
 }
+.cell-label {
+  display: none;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
 /* ---------------- Responsive ---------------- */
 @media (max-width: 1180px) {
   .overview-grid,
@@ -1566,6 +1573,9 @@ a.news-title svg {
   }
   .holding-row.head span:nth-child(3) {
     display: none;
+  }
+  .cell-label {
+    display: block;
   }
   .field-row {
     flex-direction: column;

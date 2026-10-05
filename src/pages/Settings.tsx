@@ -1,7 +1,14 @@
 import { useState } from "react";
-import { Download, Upload, Cloud, Laptop, HardDrive, ExternalLink } from "lucide-react";
+import {
+  Download,
+  Upload,
+  Cloud,
+  Laptop,
+  HardDrive,
+  ExternalLink,
+} from "lucide-react";
 import type { MarketStatus, Portfolio } from "../../shared/types";
-import { portfolioSchema, describeIssues } from "../../shared/schema";
+import { portfolioSchema } from "../../shared/schema";
 import { HOSTED, API_BASE, type PortfolioStore } from "../backend";
 import type { Update, ThemeChoice } from "../App";
 import { Card, Notice, Segmented, Badge } from "../ui";
@@ -31,10 +38,20 @@ function parseExport(raw: unknown): Portfolio {
     isSample: value.isSample ?? false,
     revision: 0,
   });
-  if (!parsed.success)
-    throw new Error(`This export cannot be imported: ${describeIssues(parsed.error)}`);
+  if (!parsed.success) {
+    const fields = [
+      ...new Set(parsed.error.issues.map((i) => i.path.join(".") || "file")),
+    ].slice(0, 6);
+    throw new Error(
+      `This export cannot be imported. Missing or invalid: ${fields.join(", ")}.`,
+    );
+  }
   return parsed.data;
 }
+const holdingsText = (p: Portfolio) =>
+  p.positions
+    .map((x) => `${x.symbol} ${number(x.shares, 6)} · ${money(x.costBasis)}`)
+    .join("; ") || "None";
 export default function Settings({
   portfolio,
   status,
@@ -47,14 +64,20 @@ export default function Settings({
   onSignOut,
 }: Props) {
   const [message, setMessage] = useState(""),
-    [imported, setImported] = useState<(Portfolio & { previewOf: number }) | null>(null),
+    [imported, setImported] = useState<
+      (Portfolio & { previewOf: number }) | null
+    >(null),
     [confirmClear, setConfirmClear] = useState(false);
   const exportData = () => {
     const url = URL.createObjectURL(
       new Blob(
         [
           JSON.stringify(
-            { ...portfolio, exportedAt: new Date().toISOString(), app: "Pulse" },
+            {
+              ...portfolio,
+              exportedAt: new Date().toISOString(),
+              app: "Pulse",
+            },
             null,
             2,
           ),
@@ -72,7 +95,8 @@ export default function Settings({
     setMessage("");
     setImported(null);
     try {
-      if (file.size > 100_000) throw new Error("Choose an export smaller than 100 KB.");
+      if (file.size > 100_000)
+        throw new Error("Choose an export smaller than 100 KB.");
       let raw: unknown;
       try {
         raw = JSON.parse(await file.text());
@@ -87,30 +111,53 @@ export default function Settings({
   };
   const rows: [string, string, string][] = imported
     ? [
-        ["Starting amount", money(portfolio.initialCapital), money(imported.initialCapital)],
-        ["Net contributions", money(portfolio.netContributions), money(imported.netContributions)],
+        [
+          "Starting amount",
+          money(portfolio.initialCapital),
+          money(imported.initialCapital),
+        ],
+        [
+          "Net contributions",
+          money(portfolio.netContributions),
+          money(imported.netContributions),
+        ],
         ["Cash", money(portfolio.cash), money(imported.cash)],
         [
-          "Holdings",
-          portfolio.positions.map((p) => `${p.symbol} ×${number(p.shares, 6)}`).join(", ") || "None",
-          imported.positions.map((p) => `${p.symbol} ×${number(p.shares, 6)}`).join(", ") || "None",
+          "Holdings (shares · total cost)",
+          holdingsText(portfolio),
+          holdingsText(imported),
         ],
         [
           "Total cost basis",
           money(portfolio.positions.reduce((s, p) => s + p.costBasis, 0)),
           money(imported.positions.reduce((s, p) => s + p.costBasis, 0)),
         ],
-        ["Watchlist", portfolio.watchlist.join(", ") || "None", imported.watchlist.join(", ") || "None"],
-        ["Sample data", portfolio.isSample ? "Yes" : "No", imported.isSample ? "Yes" : "No"],
+        [
+          "Watchlist",
+          portfolio.watchlist.join(", ") || "None",
+          imported.watchlist.join(", ") || "None",
+        ],
+        [
+          "Sample data",
+          portfolio.isSample ? "Yes" : "No",
+          imported.isSample ? "Yes" : "No",
+        ],
       ]
     : [];
-  const StoreIcon = store.kind === "sync" ? Cloud : store.kind === "browser" ? Laptop : HardDrive;
+  const StoreIcon =
+    store.kind === "sync"
+      ? Cloud
+      : store.kind === "browser"
+        ? Laptop
+        : HardDrive;
   return (
     <>
       <div className="page-head">
         <div>
           <h1>Data &amp; account</h1>
-          <p>Where your portfolio lives, backups, appearance and data sources.</p>
+          <p>
+            Where your portfolio lives, backups, appearance and data sources.
+          </p>
         </div>
       </div>
       <div className="settings-grid">
@@ -143,12 +190,15 @@ export default function Settings({
           )}
           {store.kind === "sync" && (
             <p className="field-note">
-              Forgotten passwords cannot be reset, because nobody else holds your key. Export a
-              backup below.
+              Forgotten passwords cannot be reset, because nobody else holds
+              your key. Export a backup below.
             </p>
           )}
         </Card>
-        <Card title="Backups" subtitle="JSON export of holdings, cash, balances and watchlist">
+        <Card
+          title="Backups"
+          subtitle="JSON export of holdings, cash, balances and watchlist"
+        >
           <div className="button-row">
             <button className="button" onClick={exportData}>
               <Download size={15} aria-hidden /> Export JSON
@@ -207,13 +257,20 @@ export default function Settings({
                 >
                   Replace portfolio
                 </button>
-                <button className="button ghost" onClick={() => setImported(null)}>
+                <button
+                  className="button ghost"
+                  onClick={() => setImported(null)}
+                >
                   Cancel
                 </button>
               </div>
             </div>
           )}
-          {message && <p className="field-note" role="status">{message}</p>}
+          {message && (
+            <p className="field-note" role="status">
+              {message}
+            </p>
+          )}
         </Card>
         <Card title="Appearance">
           <Segmented
@@ -230,44 +287,53 @@ export default function Settings({
         </Card>
         <Card
           title="Market data"
-          subtitle={status ? `${status.recency} · quotes refresh every ${number(status.pollMs / 1000, 0)} s while visible` : "Connecting…"}
+          subtitle={
+            status
+              ? `${status.recency} · quotes refresh every ${number(status.pollMs / 1000, 0)} s while visible`
+              : "Connecting…"
+          }
         >
           {HOSTED && status?.provider === "demo" ? (
             <p>
-              The Pulse API at <code>{API_BASE.replace(/^https?:\/\//, "")}</code> is serving
+              The Pulse API at{" "}
+              <code>{API_BASE.replace(/^https?:\/\//, "")}</code> is serving
               simulated data for previews.
             </p>
           ) : HOSTED ? (
             <p>
-              Quotes, charts and news come from Yahoo Finance and option chains from Cboe,
-              through the Pulse API at <code>{API_BASE.replace(/^https?:\/\//, "")}</code>. Both
-              are free, delayed and unofficial: they can lag, rate-limit or change without notice.
+              Quotes, charts and news come from Yahoo Finance and option chains
+              from Cboe, through the Pulse API at{" "}
+              <code>{API_BASE.replace(/^https?:\/\//, "")}</code>. Both are
+              free, delayed and unofficial: they can lag, rate-limit or change
+              without notice.
             </p>
           ) : (
             <>
               <p>
-                Current provider: <b>{status?.provider ?? "—"}</b>. Change it in the project's{" "}
-                <code>.env</code> file and restart.
+                Current provider: <b>{status?.provider ?? "—"}</b>. Change it in
+                the project's <code>.env</code> file and restart.
               </p>
               <ul className="plain-list spaced">
                 <li>
-                  <code>MARKET_PROVIDER=yahoo</code>: Yahoo stocks, charts and news, Cboe
-                  options. No key; delayed and unofficial.
+                  <code>MARKET_PROVIDER=yahoo</code>: Yahoo stocks, charts and
+                  news, Cboe options. No key; delayed and unofficial.
                 </li>
                 <li>
-                  <code>MARKET_PROVIDER=demo</code>: simulated data for offline previews.
+                  <code>MARKET_PROVIDER=demo</code>: simulated data for offline
+                  previews.
                 </li>
                 <li>
-                  <code>MARKET_PROVIDER=massive</code> with <code>MASSIVE_API_KEY</code>: a
-                  documented paid feed; set <code>MARKET_DATA_RECENCY=realtime</code> only if
-                  both stock and option entitlements include it.
+                  <code>MARKET_PROVIDER=massive</code> with{" "}
+                  <code>MASSIVE_API_KEY</code>: a documented paid feed; set{" "}
+                  <code>MARKET_DATA_RECENCY=realtime</code> only if both stock
+                  and option entitlements include it.
                 </li>
               </ul>
             </>
           )}
           <p className="field-note">
-            Polling often does not make data fresher than the provider allows. Pulse never places
-            orders.
+            Polling often does not make data fresher than the provider allows.
+            Pulse never places orders.
           </p>
         </Card>
         <Card title="Sample and reset">
@@ -275,24 +341,37 @@ export default function Settings({
             <button
               className="button"
               disabled={portfolio.positions.length > 0}
-              title={portfolio.positions.length ? "Only available for an empty portfolio" : undefined}
-              onClick={() => void onSample().catch((e: Error) => setMessage(e.message))}
+              title={
+                portfolio.positions.length
+                  ? "Only available for an empty portfolio"
+                  : undefined
+              }
+              onClick={() =>
+                void onSample().catch((e: Error) => setMessage(e.message))
+              }
             >
               Load sample holdings
             </button>
-            <button className="button danger" onClick={() => setConfirmClear(true)}>
+            <button
+              className="button danger"
+              onClick={() => setConfirmClear(true)}
+            >
               Clear portfolio
             </button>
           </div>
           {portfolio.isSample && (
             <p className="field-note">
-              <Badge kind="warn">Sample</Badge> The holdings shown are examples, not yours.
+              <Badge kind="warn">Sample</Badge> The holdings shown are examples,
+              not yours.
             </p>
           )}
           {confirmClear && (
             <div className="review">
               <b>Clear holdings, cash and balances?</b>
-              <p>Your watchlist stays. Export a backup first if you might want them back.</p>
+              <p>
+                Your watchlist stays. Export a backup first if you might want
+                them back.
+              </p>
               <div className="button-row">
                 <button
                   className="button danger"
@@ -311,7 +390,10 @@ export default function Settings({
                 >
                   Clear now
                 </button>
-                <button className="button ghost" onClick={() => setConfirmClear(false)}>
+                <button
+                  className="button ghost"
+                  onClick={() => setConfirmClear(false)}
+                >
                   Cancel
                 </button>
               </div>
@@ -321,10 +403,15 @@ export default function Settings({
         <Card title="Pricing engine">
           <p>
             Black–Scholes–Merton, Greeks, IV solver and CRR tree from{" "}
-            <a href="https://github.com/Ferrsir/options-pricer" target="_blank" rel="noreferrer">
+            <a
+              href="https://github.com/Ferrsir/options-pricer"
+              target="_blank"
+              rel="noreferrer"
+            >
               Ferrsir/options-pricer <ExternalLink size={12} aria-hidden />
             </a>{" "}
-            at commit <code>68c3636</code>, copied unchanged and run in your browser.
+            at commit <code>68c3636</code>, copied unchanged and run in your
+            browser.
           </p>
         </Card>
       </div>

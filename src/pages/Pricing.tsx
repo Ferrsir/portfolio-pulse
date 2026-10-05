@@ -20,7 +20,13 @@ import {
   type PricingInput,
 } from "../../shared/pricing";
 import { Card, Notice, Segmented, Badge, useChartColors } from "../ui";
-import { money, number, significant, marketClock, expiryLabel } from "../format";
+import {
+  money,
+  number,
+  significant,
+  marketClock,
+  expiryLabel,
+} from "../format";
 import { midpoint, IMPLAUSIBLE_IV } from "../optionMath";
 type Props = {
   status: MarketStatus | null;
@@ -54,7 +60,7 @@ export default function Pricing({
       strike: contract?.strike ?? (quotedSpot ? niceStrike(quotedSpot) : NaN),
       days: contract ? daysToExpiry(contract.expiry) : 30,
       rate: 0.04,
-      iv: usableIV(contract) ?? 0.3,
+      iv: 0.3,
       dividend: 0,
       type: contract?.type || "call",
       multiplier: contract?.multiplier || 100,
@@ -71,7 +77,6 @@ export default function Pricing({
       ...p,
       strike: contract.strike,
       days: daysToExpiry(contract.expiry),
-      iv: usableIV(contract) ?? p.iv,
       type: contract.type,
       multiplier: contract.multiplier,
     }));
@@ -83,26 +88,42 @@ export default function Pricing({
     setInput((p) => ({
       ...p,
       spot: quotedSpot ?? NaN,
-      strike: Number.isFinite(p.strike) || quotedSpot === null ? p.strike : niceStrike(quotedSpot),
+      strike:
+        Number.isFinite(p.strike) || quotedSpot === null
+          ? p.strike
+          : niceStrike(quotedSpot),
     }));
   }, [quotedSpot, selected, spotSource]);
   const problem = inputProblem(input);
-  const result = useMemo(() => (problem ? null : priceOption(input)), [input, problem]);
+  const result = useMemo(
+    () => (problem ? null : priceOption(input)),
+    [input, problem],
+  );
+  const premiumProblem =
+    marketPremium !== "" && !(Number(marketPremium) >= 0)
+      ? "Enter a market premium of $0 or more."
+      : "";
   const marketIV = useMemo(
     () =>
-      marketPremium === "" || problem || input.days <= 0
+      marketPremium === "" || premiumProblem || problem || input.days <= 0
         ? null
         : solveIV(Number(marketPremium), input),
-    [marketPremium, input, problem],
+    [marketPremium, input, problem, premiumProblem],
   );
   const marketIVValid = marketIV !== null && Number.isFinite(marketIV);
   const chart = useMemo(() => {
     if (problem) return [];
-    const top = Math.max(150, ((Math.max(input.iv, marketIVValid ? marketIV! : 0) * 100) * 1.25)),
+    const top = Math.max(
+        150,
+        Math.max(input.iv, marketIVValid ? marketIV! : 0) * 100 * 1.25,
+      ),
       step = top > 300 ? 10 : top > 150 ? 5 : 2.5;
     return Array.from({ length: Math.ceil(top / step) + 1 }, (_, i) => {
       const pct = i * step;
-      return { iv: pct, premium: priceOption({ ...input, iv: pct / 100 }).premium };
+      return {
+        iv: pct,
+        premium: priceOption({ ...input, iv: pct / 100 }).premium,
+      };
     });
   }, [input, problem, marketIV, marketIVValid]);
   const colors = useChartColors();
@@ -125,11 +146,19 @@ export default function Pricing({
           step="any"
           min={extra.min}
           max={extra.max}
-          value={Number.isFinite(input[key]) ? Number((input[key] * scale).toFixed(6)) : ""}
+          value={
+            Number.isFinite(input[key])
+              ? Number((input[key] * scale).toFixed(6))
+              : ""
+          }
           onChange={(e) => {
             if (key === "spot") setSpotSource("manual");
-            if (contract && ["strike", "days", "multiplier"].includes(key)) clearContract();
-            set(key, e.target.value === "" ? NaN : Number(e.target.value) / scale);
+            if (contract && ["strike", "days", "multiplier"].includes(key))
+              clearContract();
+            set(
+              key,
+              e.target.value === "" ? NaN : Number(e.target.value) / scale,
+            );
           }}
         />
         {unit !== "$" && <i>{unit}</i>}
@@ -142,7 +171,10 @@ export default function Pricing({
       <div className="page-head">
         <div>
           <h1>Pricing lab</h1>
-          <p>Your Black–Scholes–Merton engine with Greeks, IV solving and an American comparison.</p>
+          <p>
+            Your Black–Scholes–Merton engine with Greeks, IV solving and an
+            American comparison.
+          </p>
         </div>
         <div className="page-actions">
           <a
@@ -163,17 +195,27 @@ export default function Pricing({
             </button>
           }
         >
-          Linked to <b>{selected} {money(contract.strike)} {contract.type}</b>, expiring{" "}
-          {expiryLabel(contract.expiry, daysToExpiry(contract.expiry))} (4:00 PM ET).{" "}
+          Linked to{" "}
+          <b>
+            {selected} {money(contract.strike)} {contract.type}
+          </b>
+          , expiring{" "}
+          {expiryLabel(contract.expiry, daysToExpiry(contract.expiry))} (4:00 PM
+          ET).{" "}
           {usableIV(contract) !== null
-            ? `Provider IV ${number(contract.iv! * 100, 2)}% was copied into your IV.`
+            ? `Provider IV ${number(contract.iv! * 100, 2)}% (their model). `
             : contract.iv
-              ? `Provider IV ${number(contract.iv * 100, 0)}% looks unreliable, so your IV is unchanged.`
-              : "The provider gave no IV, so your IV is unchanged."}
+              ? `Provider IV ${number(contract.iv * 100, 0)}% looks unreliable. `
+              : "The provider gave no IV. "}
+          Your IV is unchanged; the midpoint's implied IV from your engine is
+          shown below.
         </Notice>
       )}
       <div className="pricing-grid">
-        <Card title="Inputs" subtitle="European BSM · ACT/365 · continuous rate and dividend yield">
+        <Card
+          title="Inputs"
+          subtitle="European BSM · ACT/365 · continuous rate and dividend yield"
+        >
           <div className="form-stack">
             <div className="field-row">
               <label className="field">
@@ -183,13 +225,16 @@ export default function Pricing({
                   onChange={(e) => {
                     clearContract();
                     setSpotSource("quote");
+                    setMarketPremium("");
                     setInput((p) => ({ ...p, strike: NaN }));
                     setSelected(e.target.value);
                   }}
                 >
-                  {[...new Set([selected, ...symbols])].filter(Boolean).map((s) => (
-                    <option key={s}>{s}</option>
-                  ))}
+                  {[...new Set([selected, ...symbols])]
+                    .filter(Boolean)
+                    .map((s) => (
+                      <option key={s}>{s}</option>
+                    ))}
                 </select>
               </label>
               <Segmented
@@ -214,10 +259,15 @@ export default function Pricing({
                 quotedSpot !== null ? (
                   <>
                     Using {selected}'s quote
-                    {quote?.asOf ? ` (last trade ${marketClock(quote.asOf)})` : ""}.
+                    {quote?.asOf
+                      ? ` (last trade ${marketClock(quote.asOf)})`
+                      : ""}
+                    .
                   </>
                 ) : (
-                  <span className="warn-text">Waiting for a {selected} quote. You can type a price.</span>
+                  <span className="warn-text">
+                    Waiting for a {selected} quote. You can type a price.
+                  </span>
                 )
               ) : (
                 <>
@@ -234,14 +284,30 @@ export default function Pricing({
             </p>
             <div className="form-grid">
               {field("days", "Time to expiry", "days", 1, { min: 0 })}
-              {field("iv", "Your volatility (IV)", "%", 100, { min: 0, max: 500 })}
-              {field("rate", "Risk-free rate", "%", 100, { min: -100, max: 100 })}
-              {field("dividend", "Dividend yield", "%", 100, { min: 0, max: 100 })}
-              {field("multiplier", "Contract multiplier", "shares", 1, { min: 1 })}
+              {field("iv", "Your volatility (IV)", "%", 100, {
+                min: 0,
+                max: 500,
+              })}
+              {field("rate", "Risk-free rate", "%", 100, {
+                min: -100,
+                max: 100,
+              })}
+              {field("dividend", "Dividend yield", "%", 100, {
+                min: 0,
+                max: 100,
+              })}
+              {field("multiplier", "Contract multiplier", "shares", 1, {
+                min: 1,
+              })}
             </div>
             <label className="field">
               <span>
-                Explore volatility <b>{Number.isFinite(input.iv) ? number(input.iv * 100, 1) + "%" : "—"}</b>
+                Explore volatility{" "}
+                <b>
+                  {Number.isFinite(input.iv)
+                    ? number(input.iv * 100, 1) + "%"
+                    : "—"}
+                </b>
               </span>
               <input
                 type="range"
@@ -249,7 +315,11 @@ export default function Pricing({
                 max="150"
                 step="0.5"
                 aria-label="Explore volatility"
-                value={Number.isFinite(input.iv) ? Math.min(150, Math.max(1, input.iv * 100)) : 30}
+                value={
+                  Number.isFinite(input.iv)
+                    ? Math.min(150, Math.max(1, input.iv * 100))
+                    : 30
+                }
                 onChange={(e) => set("iv", Number(e.target.value) / 100)}
               />
             </label>
@@ -266,13 +336,16 @@ export default function Pricing({
               <>
                 <Card className="premium-card">
                   <div className="premium">
-                    <span className="stat-label">Model premium · {input.type}</span>
+                    <span className="stat-label">
+                      Model premium · {input.type}
+                    </span>
                     <strong>
                       {money(result.premium)}
                       <small>/ share</small>
                     </strong>
                     <span className="muted">
-                      {money(result.contractPremium)} per {number(input.multiplier, 4)}-share contract
+                      {money(result.contractPremium)} per{" "}
+                      {number(input.multiplier, 4)}-share contract
                     </span>
                   </div>
                   <dl className="facts">
@@ -282,22 +355,29 @@ export default function Pricing({
                     </div>
                     <div>
                       <dt>Time value</dt>
-                      <dd>{money(Math.max(0, result.premium - result.intrinsic))}</dd>
+                      <dd>
+                        {money(Math.max(0, result.premium - result.intrinsic))}
+                      </dd>
                     </div>
                     <div>
                       <dt>American (CRR {TREE_STEPS})</dt>
                       <dd>{money(result.american)}</dd>
                     </div>
                     <div>
-                      <dt title="American minus European, both on the same tree">Early-exercise value</dt>
+                      <dt title="American minus European, both on the same tree">
+                        Early-exercise value
+                      </dt>
                       <dd>{money(result.earlyExercise, 4)}</dd>
                     </div>
                   </dl>
-                  {result.american === null && input.days > 0 && input.iv > 0 && (
-                    <p className="field-note">
-                      The tree is unavailable at this volatility: CRR needs σ above |r − q|·√Δt.
-                    </p>
-                  )}
+                  {result.american === null &&
+                    input.days > 0 &&
+                    input.iv > 0 && (
+                      <p className="field-note">
+                        The tree is unavailable at this volatility: CRR needs σ
+                        above |r − q|·√Δt.
+                      </p>
+                    )}
                 </Card>
                 <div className="greeks">
                   {(
@@ -333,9 +413,15 @@ export default function Pricing({
                     inputMode="decimal"
                     min="0"
                     step="any"
-                    value={marketPremium === "" ? "" : Number(marketPremium.toFixed(6))}
+                    value={
+                      marketPremium === ""
+                        ? ""
+                        : Number(marketPremium.toFixed(6))
+                    }
                     onChange={(e) =>
-                      setMarketPremium(e.target.value === "" ? "" : Number(e.target.value))
+                      setMarketPremium(
+                        e.target.value === "" ? "" : Number(e.target.value),
+                      )
                     }
                   />
                 </span>
@@ -344,7 +430,7 @@ export default function Pricing({
                 <div>
                   <dt>Market − model</dt>
                   <dd>
-                    {marketPremium === "" || !result
+                    {marketPremium === "" || premiumProblem || !result
                       ? "—"
                       : money(Number(marketPremium) - result.premium)}
                   </dd>
@@ -361,14 +447,22 @@ export default function Pricing({
                 </div>
                 <div>
                   <dt>Your IV</dt>
-                  <dd>{Number.isFinite(input.iv) ? number(input.iv * 100, 2) + "%" : "—"}</dd>
+                  <dd>
+                    {Number.isFinite(input.iv)
+                      ? number(input.iv * 100, 2) + "%"
+                      : "—"}
+                  </dd>
                 </div>
               </dl>
             </div>
+            {premiumProblem && (
+              <p className="field-note warn-text">{premiumProblem}</p>
+            )}
             {marketIV !== null && !marketIVValid && (
               <p className="field-note warn-text">
-                No BSM volatility between 0.01% and 500% reproduces this premium. Check that it
-                lies between the option's no-arbitrage bounds.
+                No BSM volatility between 0.01% and 500% reproduces this
+                premium. Check that it lies between the option's no-arbitrage
+                bounds.
               </p>
             )}
             {marketIVValid && (
@@ -386,9 +480,17 @@ export default function Pricing({
               title="Premium across volatility"
               subtitle="All other inputs held constant · dashed: your IV · solid: market-implied IV"
             >
-              <div className="chart-area short">
+              <div
+                className="chart-area short"
+                role="img"
+                aria-label={`Model premium across volatility from 0% upward; your IV ${number(input.iv * 100, 1)}%`}
+              >
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chart} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                  <LineChart
+                    data={chart}
+                    margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+                    accessibilityLayer={false}
+                  >
                     <CartesianGrid stroke={colors.grid} vertical={false} />
                     <XAxis
                       dataKey="iv"
@@ -451,17 +553,22 @@ export default function Pricing({
               </div>
               <div className="legend inline">
                 <Badge>Your IV {number(input.iv * 100, 1)}%</Badge>
-                {marketIVValid && <Badge kind="accent">Market IV {number(marketIV! * 100, 1)}%</Badge>}
+                {marketIVValid && (
+                  <Badge kind="accent">
+                    Market IV {number(marketIV! * 100, 1)}%
+                  </Badge>
+                )}
               </div>
             </Card>
           )}
         </div>
       </div>
       <p className="footnote">
-        BSM prices a European option with constant volatility and a continuous dividend yield.
-        US stock options are American, so the CRR tree estimates the early-exercise value
-        (American minus European on the same {TREE_STEPS}-step tree). A model value depends on
-        its assumptions and is not an executable price.
+        BSM prices a European option with constant volatility and a continuous
+        dividend yield. US stock options are American, so the CRR tree estimates
+        the early-exercise value (American minus European on the same{" "}
+        {TREE_STEPS}-step tree). A model value depends on its assumptions and is
+        not an executable price.
       </p>
     </>
   );

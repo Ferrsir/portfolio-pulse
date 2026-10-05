@@ -55,17 +55,25 @@ const ranges = ["1D", "1W", "1M", "3M", "1Y"] as const;
 type Range = (typeof ranges)[number];
 export default function Overview(props: Props) {
   const { portfolio, quoteList, quotes, onEdit, onAddSymbol, onSample } = props;
-  const v = useMemo(() => valuePortfolio(portfolio, quoteList), [portfolio, quoteList]);
-  const missing = v.positions.filter((p) => p.value === null).map((p) => p.symbol);
+  const v = useMemo(
+    () => valuePortfolio(portfolio, quoteList),
+    [portfolio, quoteList],
+  );
+  const missing = v.positions
+    .filter((p) => p.value === null)
+    .map((p) => p.symbol);
   const prevEquity =
-    v.equityValue !== null && v.dayChange !== null ? v.equityValue - v.dayChange : null;
+    v.equityValue !== null && v.dayChange !== null
+      ? v.equityValue - v.dayChange
+      : null;
   const contributed = v.capital;
   return (
     <>
       <div className="page-head">
         <div>
           <h1>
-            Overview {portfolio.isSample && <Badge kind="warn">Sample holdings</Badge>}
+            Overview{" "}
+            {portfolio.isSample && <Badge kind="warn">Sample holdings</Badge>}
           </h1>
           <p>Your holdings, valued at the latest available quotes.</p>
         </div>
@@ -84,10 +92,13 @@ export default function Overview(props: Props) {
           value={money(v.totalValue)}
           sub={
             v.totalValue === null ? (
-              <span className="warn-text">No quote for {missing.join(", ")}</span>
+              <span className="warn-text">
+                No quote for {missing.join(", ")}
+              </span>
             ) : (
               <>
-                Holdings {money(v.equityValue, 0)} · Cash {money(portfolio.cash, 0)}
+                Holdings {money(v.equityValue, 0)} · Cash{" "}
+                {money(portfolio.cash, 0)}
               </>
             )
           }
@@ -99,8 +110,10 @@ export default function Overview(props: Props) {
           sub={
             portfolio.positions.length ? (
               <>
-                <Delta value={prevEquity ? (v.dayChange! / prevEquity) * 100 : null} /> on
-                holdings
+                <Delta
+                  value={prevEquity ? (v.dayChange! / prevEquity) * 100 : null}
+                />{" "}
+                on holdings
               </>
             ) : (
               "No holdings yet"
@@ -113,7 +126,13 @@ export default function Overview(props: Props) {
           valueTone={v.unrealized}
           sub={
             <>
-              <Delta value={v.invested > 0 && v.unrealized !== null ? (v.unrealized / v.invested) * 100 : null} />{" "}
+              <Delta
+                value={
+                  v.invested > 0 && v.unrealized !== null
+                    ? (v.unrealized / v.invested) * 100
+                    : null
+                }
+              />{" "}
               on {money(v.invested, 0)} cost
             </>
           }
@@ -125,7 +144,8 @@ export default function Overview(props: Props) {
           sub={
             contributed > 0 ? (
               <>
-                <Delta value={v.returnPercent} /> on {money(contributed, 0)} contributed
+                <Delta value={v.returnPercent} /> on {money(contributed, 0)}{" "}
+                contributed
               </>
             ) : (
               "Add your starting amount to see a return"
@@ -138,8 +158,8 @@ export default function Overview(props: Props) {
           <div>
             <h2>Add your portfolio</h2>
             <p>
-              Enter each holding's shares and the total you paid for it, plus your cash and
-              starting amount. Nothing is filled in for you.
+              Enter each holding's shares and the total you paid for it, plus
+              your cash and starting amount. Nothing is filled in for you.
             </p>
           </div>
           <div className="page-actions">
@@ -172,27 +192,49 @@ export default function Overview(props: Props) {
               <thead>
                 <tr>
                   <th scope="col">Symbol</th>
-                  <th scope="col" className="num">Shares</th>
-                  <th scope="col" className="num">Price</th>
-                  <th scope="col" className="num">Today</th>
-                  <th scope="col" className="num">Market value</th>
-                  <th scope="col" className="num">Cost basis</th>
-                  <th scope="col" className="num">Unrealized</th>
-                  <th scope="col" className="num">Weight</th>
+                  <th scope="col" className="num">
+                    Shares
+                  </th>
+                  <th scope="col" className="num">
+                    Price
+                  </th>
+                  <th scope="col" className="num">
+                    Today
+                  </th>
+                  <th scope="col" className="num">
+                    Market value
+                  </th>
+                  <th scope="col" className="num">
+                    Cost basis
+                  </th>
+                  <th scope="col" className="num">
+                    Unrealized
+                  </th>
+                  <th scope="col" className="num">
+                    Weight
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {v.positions.map((p) => (
-                  <tr key={p.symbol} className={props.selected === p.symbol ? "selected" : ""}>
+                  <tr
+                    key={p.symbol}
+                    className={props.selected === p.symbol ? "selected" : ""}
+                  >
                     <th scope="row">
-                      <button className="row-button" onClick={() => props.setSelected(p.symbol)}>
+                      <button
+                        className="row-button"
+                        onClick={() => props.setSelected(p.symbol)}
+                      >
                         <Ticker symbol={p.symbol} name={p.quote?.name} />
                       </button>
                     </th>
                     <td className="num">{number(p.shares, 6)}</td>
                     <td className="num">{money(p.price)}</td>
                     <td className="num">
-                      <Delta value={p.price === null ? null : p.quote?.changePercent} />
+                      <Delta
+                        value={p.price === null ? null : p.quote?.changePercent}
+                      />
                     </td>
                     <td className="num strong">{money(p.value)}</td>
                     <td className="num">{money(p.costBasis)}</td>
@@ -218,12 +260,16 @@ export default function Overview(props: Props) {
                   <td />
                   <td />
                   <td className="num">
-                    <Delta value={v.dayChange}>{signedMoney(v.dayChange)}</Delta>
+                    <Delta value={v.dayChange}>
+                      {signedMoney(v.dayChange)}
+                    </Delta>
                   </td>
                   <td className="num strong">{money(v.equityValue)}</td>
                   <td className="num">{money(v.invested)}</td>
                   <td className="num">
-                    <Delta value={v.unrealized}>{signedMoney(v.unrealized)}</Delta>
+                    <Delta value={v.unrealized}>
+                      {signedMoney(v.unrealized)}
+                    </Delta>
                   </td>
                   <td />
                 </tr>
@@ -231,14 +277,17 @@ export default function Overview(props: Props) {
             </table>
           </div>
         ) : (
-          <Empty title="No holdings yet">Your watchlist below still updates.</Empty>
+          <Empty title="No holdings yet">
+            Your watchlist below still updates.
+          </Empty>
         )}
       </Card>
       <Watchlist {...props} />
       <p className="footnote">
-        Return since start = portfolio value − starting amount − net contributions, divided
-        by contributed capital. It is a simple return, not time-weighted, and not a tax
-        record. Editing holdings does not change cash.
+        Return since start = portfolio value − starting amount − net
+        contributions, divided by contributed capital. It is a simple return,
+        not time-weighted, and not a tax record. Editing holdings does not
+        change cash.
       </p>
     </>
   );
@@ -286,7 +335,9 @@ function ChartCard({
     setError("");
     store
       .snapshots(portfolio, `${status.provider}:${status.recency}`)
-      .then((rows) => setBars(rows.map((r) => ({ time: r.time, close: r.value }))))
+      .then((rows) =>
+        setBars(rows.map((r) => ({ time: r.time, close: r.value }))),
+      )
       .catch((e: Error) => setError(e.message));
   }, [mode, store, portfolio, status, snapshotTick, fetchedAt.slice(0, 16)]);
   const first = bars[0]?.close,
@@ -304,7 +355,13 @@ function ChartCard({
   return (
     <Card
       className="chart-card"
-      title={mode === "stock" ? <Ticker symbol={selected} name={quote?.name} /> : "Recorded portfolio value"}
+      title={
+        mode === "stock" ? (
+          <Ticker symbol={selected} name={quote?.name} />
+        ) : (
+          "Recorded portfolio value"
+        )
+      }
       subtitle={
         mode === "stock"
           ? quote?.asOf
@@ -327,10 +384,15 @@ function ChartCard({
     >
       <div className="chart-toolbar">
         <div className="chart-figure">
-          <strong>{mode === "stock" ? money(quote?.price) : money(totalValue)}</strong>
+          <strong>
+            {mode === "stock" ? money(quote?.price) : money(totalValue)}
+          </strong>
           {mode === "stock" ? (
             <span>
-              <Delta value={quote?.price == null ? null : quote.changePercent} /> today
+              <Delta
+                value={quote?.price == null ? null : quote.changePercent}
+              />{" "}
+              today
               {rangeChange !== null && range !== "1D" && (
                 <>
                   {" · "}
@@ -352,10 +414,22 @@ function ChartCard({
           />
         )}
       </div>
-      <div className="chart-area">
+      <div
+        className="chart-area"
+        role="img"
+        aria-label={
+          mode === "stock"
+            ? `${selected} price chart, ${range}${rangeChange !== null ? `, ${rangeChange >= 0 ? "up" : "down"} ${Math.abs(rangeChange).toFixed(2)}%` : ""}`
+            : `Recorded portfolio value, ${bars.length} points`
+        }
+      >
         {bars.length > 1 ? (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={bars} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+            <AreaChart
+              data={bars}
+              margin={{ top: 8, right: 4, left: 0, bottom: 0 }}
+              accessibilityLayer={false}
+            >
               <defs>
                 <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={stroke} stopOpacity={0.16} />
@@ -401,7 +475,10 @@ function ChartCard({
                     ...(intraday ? { hour: "numeric", minute: "2-digit" } : {}),
                   })
                 }
-                formatter={(n) => [money(Number(n)), mode === "stock" ? selected : "Portfolio"]}
+                formatter={(n) => [
+                  money(Number(n)),
+                  mode === "stock" ? selected : "Portfolio",
+                ]}
               />
               <Area
                 type="monotone"
@@ -456,9 +533,13 @@ function Allocation({
     <Card title="Allocation" subtitle="Share of market value, including cash">
       {slices.length ? (
         <div className="allocation">
-          <div className="donut">
+          <div
+            className="donut"
+            role="img"
+            aria-label="Allocation donut; values are listed below"
+          >
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
+              <PieChart accessibilityLayer={false}>
                 <Pie
                   data={slices}
                   innerRadius="68%"
@@ -496,12 +577,21 @@ function Allocation({
           )}
         </div>
       ) : (
-        <Empty title="Nothing allocated yet">Holdings and cash appear here.</Empty>
+        <Empty title="Nothing allocated yet">
+          Holdings and cash appear here.
+        </Empty>
       )}
     </Card>
   );
 }
-function Watchlist({ portfolio, quotes, selected, setSelected, update, onAddSymbol }: Props) {
+function Watchlist({
+  portfolio,
+  quotes,
+  selected,
+  setSelected,
+  update,
+  onAddSymbol,
+}: Props) {
   const [busy, setBusy] = useState("");
   return (
     <Card
@@ -524,10 +614,18 @@ function Watchlist({ portfolio, quotes, selected, setSelected, update, onAddSymb
             <thead>
               <tr>
                 <th scope="col">Symbol</th>
-                <th scope="col" className="num">Price</th>
-                <th scope="col" className="num">Change</th>
-                <th scope="col" className="num">Today</th>
-                <th scope="col" className="num hide-sm">Last trade</th>
+                <th scope="col" className="num">
+                  Price
+                </th>
+                <th scope="col" className="num">
+                  Change
+                </th>
+                <th scope="col" className="num">
+                  Today
+                </th>
+                <th scope="col" className="num hide-sm">
+                  Last trade
+                </th>
                 <th scope="col">
                   <span className="sr-only">Remove</span>
                 </th>
@@ -538,13 +636,21 @@ function Watchlist({ portfolio, quotes, selected, setSelected, update, onAddSymb
                 const q = quotes.get(symbol),
                   priced = q?.price != null;
                 return (
-                  <tr key={symbol} className={selected === symbol ? "selected" : ""}>
+                  <tr
+                    key={symbol}
+                    className={selected === symbol ? "selected" : ""}
+                  >
                     <th scope="row">
-                      <button className="row-button" onClick={() => setSelected(symbol)}>
+                      <button
+                        className="row-button"
+                        onClick={() => setSelected(symbol)}
+                      >
                         <Ticker symbol={symbol} name={q?.name} />
                       </button>
                     </th>
-                    <td className="num strong">{priced ? money(q!.price) : "No quote"}</td>
+                    <td className="num strong">
+                      {priced ? money(q!.price) : "No quote"}
+                    </td>
                     <td className="num">
                       <Delta value={priced ? q!.change : null}>
                         {priced ? signedMoney(q!.change) : "—"}
@@ -554,7 +660,9 @@ function Watchlist({ portfolio, quotes, selected, setSelected, update, onAddSymb
                       <Delta value={priced ? q!.changePercent : null} />
                     </td>
                     <td className="num muted hide-sm">
-                      {q?.source === "Simulated" ? "Simulated" : marketClock(q?.asOf)}
+                      {q?.source === "Simulated"
+                        ? "Simulated"
+                        : marketClock(q?.asOf)}
                     </td>
                     <td className="row-end">
                       <button
@@ -582,9 +690,14 @@ function Watchlist({ portfolio, quotes, selected, setSelected, update, onAddSymb
           </table>
         </div>
       ) : (
-        <Empty title="Your watchlist is empty" action={
-          <button className="button" onClick={onAddSymbol}>Add a symbol</button>
-        } />
+        <Empty
+          title="Your watchlist is empty"
+          action={
+            <button className="button" onClick={onAddSymbol}>
+              Add a symbol
+            </button>
+          }
+        />
       )}
     </Card>
   );
