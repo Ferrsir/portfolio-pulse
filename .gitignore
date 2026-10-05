@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+.env
+.env.*
+!.env.example
+*.log
+coverage/
+.local/
+pulse-portfolio*.json
+claude-install.ps1
+.DS_Store
