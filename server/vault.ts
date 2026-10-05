@@ -10,6 +10,10 @@ import { httpError } from "./errors.js";
  * only the encrypted envelope, at a path derived from username + auth token, so it
  * cannot read holdings and a wrong password simply finds no vault.
  *
+ * Preconditions travel in the app's own headers (X-Pulse-Create, X-Pulse-If-Match) and
+ * responses carry the ETag only in the JSON body: CDNs and proxies apply HTTP conditional
+ * rules to If-None-Match / If-Match / ETag and turned a successful create into a 304.
+ *
  * Abuse limits: the first password to create a username claims it (others get 409),
  * SYNC_ALLOWED_USERS limits which usernames may exist, and SYNC_MAX_ACCOUNTS caps how
  * many usernames can ever be claimed.
@@ -94,7 +98,6 @@ export function vaultRouter(storage: VaultStorage) {
         return;
       }
       res.setHeader("Cache-Control", "no-store");
-      res.setHeader("ETag", found.etag);
       res.json({ etag: found.etag, envelope: JSON.parse(found.body) });
     } catch (e) {
       next(e);
@@ -108,16 +111,15 @@ export function vaultRouter(storage: VaultStorage) {
       if (!parsed.success)
         throw httpError(400, "The encrypted portfolio was malformed.");
       const body = JSON.stringify(parsed.data),
-        ifMatch = etagOf(req, "if-match"),
-        create = etagOf(req, "if-none-match") === "*";
+        ifMatch = etagOf(req, "x-pulse-if-match"),
+        create = etagOf(req, "x-pulse-create") === "1";
       if (!ifMatch && !create)
-        throw httpError(428, "Send If-Match (update) or If-None-Match: * (create).");
+        throw httpError(428, "Send X-Pulse-If-Match (update) or X-Pulse-Create: 1 (create).");
       if (create) await claimUsername(storage, user, token);
       const etag = create
         ? await storage.create(path, body)
         : await storage.replace(path, body, ifMatch);
       res.setHeader("Cache-Control", "no-store");
-      res.setHeader("ETag", etag);
       res.json({ etag });
     } catch (e) {
       next(e);
@@ -126,8 +128,8 @@ export function vaultRouter(storage: VaultStorage) {
   router.delete("/", async (req, res, next) => {
     try {
       const { user, path } = account(req),
-        ifMatch = etagOf(req, "if-match");
-      if (!ifMatch) throw httpError(428, "Send If-Match to delete.");
+        ifMatch = etagOf(req, "x-pulse-if-match");
+      if (!ifMatch) throw httpError(428, "Send X-Pulse-If-Match to delete.");
       await storage.remove(path, ifMatch);
       // Free the username; the vault (the proof of the password) is already gone.
       await storage.remove(claimPath(user)).catch(() => {});

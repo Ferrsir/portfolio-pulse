@@ -84,14 +84,14 @@ test("vault: create, read, conditional update, conflicts, and errors", async () 
   assert.equal(r.status, 428, "a write without a precondition is refused");
   r = await fetch(base, {
     method: "PUT",
-    headers: auth(me, { "If-None-Match": "*" }),
+    headers: auth(me, { "X-Pulse-Create": "1" }),
     body,
   });
   assert.equal(r.status, 200);
   const created = (await r.json()).etag as string;
   r = await fetch(base, {
     method: "PUT",
-    headers: auth(me, { "If-None-Match": "*" }),
+    headers: auth(me, { "X-Pulse-Create": "1" }),
     body,
   });
   assert.equal(r.status, 409, "creating twice is a conflict");
@@ -104,7 +104,7 @@ test("vault: create, read, conditional update, conflicts, and errors", async () 
   assert.equal((await fetch(base, { headers: auth(other) })).status, 404);
   r = await fetch(base, {
     method: "PUT",
-    headers: auth(me, { "If-Match": created }),
+    headers: auth(me, { "X-Pulse-If-Match": created }),
     body,
   });
   assert.equal(r.status, 200);
@@ -112,14 +112,14 @@ test("vault: create, read, conditional update, conflicts, and errors", async () 
   assert.notEqual(updated, created);
   r = await fetch(base, {
     method: "PUT",
-    headers: auth(me, { "If-Match": created }),
+    headers: auth(me, { "X-Pulse-If-Match": created }),
     body,
   });
   assert.equal(r.status, 409, "a stale ETag (other device saved) is rejected");
   assert.match((await r.json()).error, /another device/);
   r = await fetch(base, {
     method: "PUT",
-    headers: auth(me, { "If-Match": updated }),
+    headers: auth(me, { "X-Pulse-If-Match": updated }),
     body: JSON.stringify({ v: 1, iv: "x", data: "plain text" }),
   });
   assert.equal(r.status, 400);
@@ -127,13 +127,13 @@ test("vault: create, read, conditional update, conflicts, and errors", async () 
   assert.equal(r.status, 401);
   r = await fetch(base, {
     method: "PUT",
-    headers: { ...auth(me, { "If-Match": updated }), "Content-Type": "text/plain" },
+    headers: { ...auth(me, { "X-Pulse-If-Match": updated }), "Content-Type": "text/plain" },
     body,
   });
   assert.equal(r.status, 415);
   r = await fetch(base, {
     method: "PUT",
-    headers: auth(me, { "If-Match": updated }),
+    headers: auth(me, { "X-Pulse-If-Match": updated }),
     body: "{not json",
   });
   assert.equal(r.status, 400);
@@ -144,7 +144,7 @@ test("vault: create, read, conditional update, conflicts, and errors", async () 
   } finally {
     delete process.env.SYNC_ALLOWED_USERS;
   }
-  r = await fetch(base, { method: "DELETE", headers: auth(me, { "If-Match": updated }) });
+  r = await fetch(base, { method: "DELETE", headers: auth(me, { "X-Pulse-If-Match": updated }) });
   assert.equal(r.status, 204);
   assert.equal((await fetch(base, { headers: auth(me) })).status, 404);
 });
@@ -169,26 +169,26 @@ test("vault: usernames are claimed by the first password, can be capped, and fre
         body,
       });
   const body = JSON.stringify(await encryptPortfolio(owner, samplePortfolio));
-  let r = await put(owner, { "If-None-Match": "*" }, body);
+  let r = await put(owner, { "X-Pulse-Create": "1" }, body);
   assert.equal(r.status, 200);
   const etag = (await r.json()).etag;
-  r = await put(squatter, { "If-None-Match": "*" }, body);
+  r = await put(squatter, { "X-Pulse-Create": "1" }, body);
   assert.equal(r.status, 409);
   assert.match((await r.json()).error, /already taken/);
   // Cap: with one claimed name already, a cap of 1 refuses a new username.
   process.env.SYNC_MAX_ACCOUNTS = "1";
   try {
     const stranger = await deriveCredentials("stranger", "stranger password", fast);
-    r = await put(stranger, { "If-None-Match": "*" }, body);
+    r = await put(stranger, { "X-Pulse-Create": "1" }, body);
     assert.equal(r.status, 403);
   } finally {
     delete process.env.SYNC_MAX_ACCOUNTS;
   }
   r = await fetch(base, {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${owner.token}`, "X-Pulse-User": "claimer", "If-Match": etag },
+    headers: { Authorization: `Bearer ${owner.token}`, "X-Pulse-User": "claimer", "X-Pulse-If-Match": etag },
   });
   assert.equal(r.status, 204);
-  r = await put(squatter, { "If-None-Match": "*" }, body);
+  r = await put(squatter, { "X-Pulse-Create": "1" }, body);
   assert.equal(r.status, 200, "a deleted account frees its username");
 });

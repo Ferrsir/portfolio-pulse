@@ -29,9 +29,8 @@ app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Methods", "GET, PUT, DELETE, OPTIONS");
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Authorization, Content-Type, If-Match, If-None-Match, X-Pulse-User",
+      "Authorization, Content-Type, X-Pulse-User, X-Pulse-Create, X-Pulse-If-Match",
     );
-    res.setHeader("Access-Control-Expose-Headers", "ETag");
     res.setHeader("Access-Control-Max-Age", "600");
   } else if (origin) {
     res.status(403).json({ error: "This origin may not use portfolio sync." });

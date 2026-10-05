@@ -241,7 +241,7 @@ export async function createVault(c: SyncCredentials, initial: Portfolio) {
   const portfolio = validated({ ...initial, revision: 0 });
   await api<{ etag: string }>("/vault", {
     method: "PUT",
-    headers: { ...vaultHeaders(c), "If-None-Match": "*" },
+    headers: { ...vaultHeaders(c), "X-Pulse-Create": "1" },
     body: JSON.stringify(await encryptPortfolio(c, portfolio)),
   });
 }
@@ -271,7 +271,7 @@ export function syncStore(c: SyncCredentials): PortfolioStore {
       });
       const result = await api<{ etag: string }>("/vault", {
         method: "PUT",
-        headers: { ...vaultHeaders(c), "If-Match": etag },
+        headers: { ...vaultHeaders(c), "X-Pulse-If-Match": etag },
         body: JSON.stringify(await encryptPortfolio(c, next)),
       });
       etag = result.etag;

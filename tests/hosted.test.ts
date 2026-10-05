@@ -52,14 +52,14 @@ test("vault CORS admits only the site's own origins", async () => {
       headers: {
         Origin: from,
         "Access-Control-Request-Method": "PUT",
-        "Access-Control-Request-Headers": "authorization,content-type,if-match,x-pulse-user",
+        "Access-Control-Request-Headers": "authorization,content-type,x-pulse-if-match,x-pulse-user",
       },
     });
   let r = await preflight("https://ferrsir.github.io");
   assert.equal(r.status, 204);
   assert.equal(r.headers.get("access-control-allow-origin"), "https://ferrsir.github.io");
-  assert.match(r.headers.get("access-control-allow-headers") || "", /If-Match/);
-  assert.match(r.headers.get("access-control-expose-headers") || "", /ETag/);
+  assert.match(r.headers.get("access-control-allow-headers") || "", /X-Pulse-If-Match/);
+  assert.match(r.headers.get("access-control-allow-headers") || "", /X-Pulse-Create/);
   r = await preflight("http://localhost:5173");
   assert.equal(r.status, 204);
   r = await preflight("https://evil.example");
