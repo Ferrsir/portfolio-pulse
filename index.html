@@ -2,10 +2,24 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0b1018" />
-    <meta name="description" content="A personal stock portfolio dashboard with market news, options analytics, and Black–Scholes–Merton pricing." />
-    <title>Pulse · Portfolio intelligence</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f5f6f8" />
+    <meta name="description" content="A personal stock portfolio dashboard with delayed quotes, news, option chains and Black–Scholes–Merton pricing." />
+    <meta name="robots" content="noindex" />
+    <title>Pulse · Portfolio</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f55d4'/%3E%3Cpath d='M5 17h5l3-7 5 13 3-6h6' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&display=swap" rel="stylesheet" />
+    <script>
+      // Apply the saved or system theme before first paint (no light flash in dark mode).
+      try {
+        var t = localStorage.getItem("pulse:theme");
+        if (t !== "light" && t !== "dark")
+          t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
   </head>
   <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
 </html>

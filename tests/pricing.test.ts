@@ -66,3 +66,38 @@ test("Invalid numerical inputs are rejected", () => {
   assert.throws(() => priceOption({ ...input, iv: NaN }));
   assert.throws(() => priceOption({ ...input, days: -1 }));
 });
+test("Early-exercise value compares tree with tree, so it is zero for a no-dividend call", () => {
+  // Tree-vs-closed-form would show about -0.0067 here: pure CRR discretisation error.
+  const call = priceOption(input);
+  assert.equal(call.earlyExercise, 0);
+  const put = priceOption({ ...input, days: 30, rate: 0.04, iv: 0.3, type: "put" });
+  assert.ok(put.earlyExercise! > 0 && put.earlyExercise! < 0.05);
+  assert.ok(put.american! >= put.premium - 0.05);
+});
+test("Far out-of-the-money premiums never go negative from float noise", () => {
+  const p = priceOption({
+    ...input,
+    spot: 50,
+    strike: 60,
+    days: 7,
+    iv: 0.15,
+    rate: 0.04,
+    dividend: 0.005,
+  });
+  assert.ok(p.premium >= 0 && p.contractPremium >= 0);
+});
+test("A non-finite American tree value is reported as unavailable", () => {
+  const p = priceOption({ ...input, days: 36500, iv: 5 });
+  assert.ok(p.american === null || Number.isFinite(p.american));
+  assert.ok(p.earlyExercise === null || Number.isFinite(p.earlyExercise));
+});
+test("Validation names the field to fix", () => {
+  assert.throws(() => priceOption({ ...input, days: NaN }), /time to expiry/);
+  assert.throws(() => priceOption({ ...input, multiplier: 0 }), /multiplier/);
+  assert.throws(() => priceOption({ ...input, strike: -1 }), /strike/);
+  assert.ok(Number.isNaN(solveIV(5, { ...input, type: "x" as "call" })));
+});
+test("Invalid expiry strings are not treated as already expired", () => {
+  for (const bad of ["", "abc", "2026-13-01", "2027-02-29"])
+    assert.ok(Number.isNaN(daysToExpiry(bad)), bad);
+});

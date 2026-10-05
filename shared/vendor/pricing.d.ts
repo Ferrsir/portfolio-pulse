@@ -44,3 +44,13 @@ export function americanPrice(
   kind: Kind,
   steps: number,
 ): number;
+export function europeanTree(
+  S: number,
+  K: number,
+  T: number,
+  r: number,
+  sigma: number,
+  q: number,
+  kind: Kind,
+  steps: number,
+): number;

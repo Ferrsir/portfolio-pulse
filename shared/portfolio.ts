@@ -1,9 +1,13 @@
-import type { Portfolio, Quote } from "./types";
+import type { Portfolio, Quote } from "./types.js";
 export function valuePortfolio(portfolio: Portfolio, quotes: Quote[]) {
   const map = new Map(quotes.map((q) => [q.symbol, q]));
   const positions = portfolio.positions.map((p) => {
     const quote = map.get(p.symbol);
-    const price = quote?.price ?? null;
+    // A non-positive or non-finite price is a missing quote, never a real valuation.
+    const price =
+      quote?.price != null && Number.isFinite(quote.price) && quote.price > 0
+        ? quote.price
+        : null;
     const value = price === null ? null : price * p.shares;
     return {
       ...p,

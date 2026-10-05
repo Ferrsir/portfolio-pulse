@@ -5,9 +5,9 @@ import type {
   OptionContract,
   OptionChain,
   MarketStatus,
-} from "../shared/types";
+} from "../shared/types.js";
 import { bsmPrice, bsmGreeks } from "../shared/vendor/pricing.js";
-import { daysToExpiry } from "../shared/pricing";
+import { daysToExpiry } from "../shared/pricing.js";
 const names: Record<string, string> = {
   AAPL: "Apple Inc.",
   MSFT: "Microsoft",
@@ -31,6 +31,9 @@ const demoPrices: Record<string, number> = {
 const hash = (s: string) => [...s].reduce((a, c) => a + c.charCodeAt(0), 0);
 const nullable = (x: unknown): number | null =>
   typeof x === "number" && Number.isFinite(x) ? x : null;
+// A traded stock never prices at or below zero; such values are provider placeholders.
+const positive = (x: unknown): number | null =>
+  typeof x === "number" && Number.isFinite(x) && x > 0 ? x : null;
 const timestamp = (x: unknown) => {
   if (typeof x !== "number" || x <= 0) return null;
   const ms = x > 1e16 ? x / 1e6 : x > 1e13 ? x / 1000 : x < 1e11 ? x * 1000 : x;
@@ -160,8 +163,8 @@ export async function quotes(symbols: string[]): Promise<Quote[]> {
         try {
           const chart = await yahooChart(symbol),
             m = chart.meta,
-            price = nullable(m.regularMarketPrice),
-            previousClose = nullable(m.chartPreviousClose ?? m.previousClose);
+            price = positive(m.regularMarketPrice),
+            previousClose = positive(m.chartPreviousClose ?? m.previousClose);
           return {
             symbol,
             name: m.longName || m.shortName || names[symbol] || symbol,
@@ -202,8 +205,10 @@ export async function quotes(symbols: string[]): Promise<Quote[]> {
     );
     return symbols.map((symbol) => {
       const q = map.get(symbol),
-        price = nullable(q?.lastTrade?.p ?? q?.min?.c ?? q?.day?.c),
-        previousClose = nullable(q?.prevDay?.c);
+        // After the provider's overnight reset, minute/day bars read 0: skip them, never value at $0.
+        price =
+          positive(q?.lastTrade?.p) ?? positive(q?.min?.c) ?? positive(q?.day?.c),
+        previousClose = positive(q?.prevDay?.c);
       return {
         symbol,
         name: names[symbol] || symbol,
@@ -234,7 +239,7 @@ export async function history(symbol: string, range: string): Promise<Bar[]> {
     "3M": { days: 90, multiplier: 1, span: "day", interval: "1d" },
     "1Y": { days: 365, multiplier: 1, span: "day", interval: "1d" },
   };
-  const c = config[range] || config["1M"],
+  const c = Object.hasOwn(config, range) ? config[range] : config["1M"],
     provider = marketStatus().provider;
   if (provider === "demo") {
     const current = demoQuote(symbol).price!,
@@ -264,7 +269,7 @@ export async function history(symbol: string, range: string): Promise<Bar[]> {
         time: new Date(t * 1000).toISOString(),
         close: chart.indicators?.quote?.[0]?.close?.[i],
       }))
-      .filter((x: Bar) => Number.isFinite(x.close));
+      .filter((x: Bar) => Number.isFinite(x.close) && x.close > 0);
   }
   return cached(`bars:${symbol}:${range}`, 60000, async () => {
     const end = new Date().toISOString().slice(0, 10),
@@ -277,7 +282,7 @@ export async function history(symbol: string, range: string): Promise<Bar[]> {
     );
     return (data.results || [])
       .map((b: any) => ({ time: new Date(b.t).toISOString(), close: b.c }))
-      .filter((b: Bar) => Number.isFinite(b.close));
+      .filter((b: Bar) => Number.isFinite(b.close) && b.close > 0);
   });
 }
 export async function news(symbols: string[]): Promise<NewsItem[]> {
@@ -469,7 +474,8 @@ export async function options(
         expiry: o.details.expiration_date,
         bid: nullable(o.last_quote?.bid),
         ask: nullable(o.last_quote?.ask),
-        iv: nullable(o.implied_volatility),
+        // Massive sends 0 when it could not compute IV; that is not a real volatility.
+        iv: positive(o.implied_volatility),
         volume: nullable(o.day?.volume),
         openInterest: nullable(o.open_interest),
         delta: nullable(o.greeks?.delta),

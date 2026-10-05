@@ -56,3 +56,11 @@ test("Zero contributed capital has no fabricated percentage return", () => {
     null,
   );
 });
+test("A zero or non-finite quote price leaves totals incomplete instead of valuing at $0", () => {
+  for (const price of [0, -1, Number.NaN]) {
+    const v = valuePortfolio(p, [{ ...q, price }]);
+    assert.equal(v.complete, false, String(price));
+    assert.equal(v.totalValue, null);
+    assert.equal(v.positions[0].value, null);
+  }
+});

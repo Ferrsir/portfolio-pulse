@@ -1,6 +1,6 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { options, cboeGeneratedAt } from "../server/market";
+import { options, quotes, cboeGeneratedAt } from "../server/market";
 import { nearMoneyIV } from "../shared/types";
 import type { OptionContract } from "../shared/types";
 
@@ -147,4 +147,18 @@ test("Near-the-money IV requires a spot price and averages call/put at nearest s
   // Nearest strike with only one valid IV uses that value; no invented put IV.
   assert.equal(nearMoneyIV(chain, 104.9), 0.28);
   assert.equal(nearMoneyIV([contract("call", 100, null)], 100), null);
+});
+test("Massive zeroed bars after the overnight reset are a missing price, not $0", async () => {
+  process.env.MARKET_PROVIDER = "massive";
+  process.env.MASSIVE_API_KEY = "test-only";
+  mockFetch(() => ({
+    tickers: [
+      { ticker: "ZERO", min: { c: 0 }, day: { c: 0 }, prevDay: { c: 227.5 } },
+      { ticker: "LATE", min: { c: 0 }, day: { c: 101.5 }, prevDay: { c: 100 } },
+    ],
+  }));
+  const [zero, late] = await quotes(["ZERO", "LATE"]);
+  assert.equal(zero.price, null);
+  assert.equal(zero.change, null);
+  assert.equal(late.price, 101.5, "falls through a zero minute bar to the day bar");
 });
