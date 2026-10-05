@@ -8,6 +8,7 @@ import type {
 } from "../shared/types.js";
 import { bsmPrice, bsmGreeks } from "../shared/vendor/pricing.js";
 import { daysToExpiry } from "../shared/pricing.js";
+import { httpError } from "./errors.js";
 const names: Record<string, string> = {
   AAPL: "Apple Inc.",
   MSFT: "Microsoft",
@@ -94,11 +95,20 @@ async function getJson(url: string, headers: Record<string, string> = {}) {
     signal: AbortSignal.timeout(15000),
   });
   if (!response.ok)
-    throw new Error(
-      `Market provider returned ${response.status}. ${response.status === 403 ? "Check data entitlements." : response.status === 429 ? "Rate limit reached; wait before refreshing." : "Try again later."}`,
+    throw Object.assign(
+      new Error(
+        `Market provider returned ${response.status}. ${response.status === 403 ? "Check data entitlements." : response.status === 429 ? "Rate limit reached; wait before refreshing." : "Try again later."}`,
+      ),
+      { providerStatus: response.status },
     );
   return response.json() as Promise<any>;
 }
+// Share classes: people type BRK.B; Yahoo spells it BRK-B and Cboe BRK.B.
+const yahooSymbol = (s: string) => s.replace(/\.([A-Z])$/, "-$1");
+const cboeSymbol = (s: string) => s.replace(/-([A-Z])$/, ".$1");
+/** Today's date in New York, where US options expire. */
+const newYorkDate = () =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
 export function marketStatus(): MarketStatus {
   const provider = process.env.MARKET_PROVIDER || "demo";
   return {
@@ -147,11 +157,11 @@ function demoQuote(symbol: string): Quote {
 async function yahooChart(symbol: string, range = "1d", interval = "5m") {
   return cached(`yahoo:${symbol}:${range}`, 60000, async () => {
     const data = await getJson(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`,
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol(symbol))}?range=${range}&interval=${interval}`,
     );
     const chart = data.chart?.result?.[0];
     if (!chart) throw new Error(`No Yahoo data for ${symbol}.`);
-    return chart;
+    return { ...chart, fetchedAt: new Date().toISOString() };
   });
 }
 export async function quotes(symbols: string[]): Promise<Quote[]> {
@@ -180,6 +190,7 @@ export async function quotes(symbols: string[]): Promise<Quote[]> {
                 : null,
             asOf: timestamp(m.regularMarketTime),
             source: "Yahoo · unofficial / delayed",
+            fetchedAt: chart.fetchedAt,
           };
         } catch {
           return {
@@ -196,6 +207,7 @@ export async function quotes(symbols: string[]): Promise<Quote[]> {
       }),
     );
   return cached(`quotes:${symbols.join(",")}`, 12000, async () => {
+    const fetchedAt = new Date().toISOString();
     const data = await massive(
       "/v2/snapshot/locale/us/markets/stocks/tickers",
       { tickers: symbols.join(",") },
@@ -224,6 +236,7 @@ export async function quotes(symbols: string[]): Promise<Quote[]> {
             : null,
         asOf: timestamp(q?.lastTrade?.t ?? q?.min?.t ?? q?.updated),
         source: "Massive",
+        fetchedAt,
       };
     });
   });
@@ -313,20 +326,7 @@ export async function news(symbols: string[]): Promise<NewsItem[]> {
   return cached(`news:${symbols.join(",")}`, 300000, async () => {
     const groups = await Promise.all(
       symbols.map(async (symbol) => {
-        if (provider === "yahoo") {
-          const d = await getJson(
-            `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(symbol)}&quotesCount=0&newsCount=6`,
-          );
-          return (d.news || []).map((n: any) => ({
-            id: n.uuid,
-            title: n.title,
-            publisher: n.publisher,
-            url: n.link,
-            publishedAt: new Date(n.providerPublishTime * 1000).toISOString(),
-            symbols: n.relatedTickers || [symbol],
-            description: "",
-          }));
-        }
+        if (provider === "yahoo") return yahooNews(symbol);
         const d = await massive("/v2/reference/news", {
           ticker: symbol,
           limit: "6",
@@ -351,11 +351,116 @@ export async function news(symbols: string[]): Promise<NewsItem[]> {
     ].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
   });
 }
-export async function options(
-  symbol: string,
-  expiry?: string,
-): Promise<OptionChain> {
+const decodeXml = (s: string) =>
+  s
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .trim();
+/** Yahoo search news, falling back to the RSS headline feed (search can come back empty
+ *  for some networks, including cloud hosts). */
+async function yahooNews(symbol: string): Promise<NewsItem[]> {
+  const ys = yahooSymbol(symbol);
+  try {
+    const d = await getJson(
+      `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(ys)}&quotesCount=0&newsCount=6&region=US&lang=en-US`,
+    );
+    const items: NewsItem[] = (d.news || [])
+      .filter((n: any) => n.uuid && n.title && Number.isFinite(n.providerPublishTime))
+      .map((n: any) => ({
+        id: n.uuid,
+        title: n.title,
+        publisher: n.publisher || "Yahoo Finance",
+        url: n.link || null,
+        publishedAt: new Date(n.providerPublishTime * 1000).toISOString(),
+        symbols: (n.relatedTickers || [ys]).map((t: string) => (t === ys ? symbol : t)),
+        description: "",
+      }));
+    if (items.length) return items;
+  } catch {
+    /* Try the RSS feed below. */
+  }
+  const response = await fetch(
+    `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(ys)}&region=US&lang=en-US`,
+    {
+      headers: { "User-Agent": "Mozilla/5.0 (PortfolioPulse; personal dashboard)" },
+      signal: AbortSignal.timeout(15000),
+    },
+  );
+  if (!response.ok)
+    throw new Error(`Market provider returned ${response.status} for Yahoo news.`);
+  const xml = await response.text();
+  return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, 8).flatMap(([, item]) => {
+    const tag = (name: string) =>
+      decodeXml(new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`).exec(item)?.[1] || "");
+    const title = tag("title"),
+      link = tag("link"),
+      published = Date.parse(tag("pubDate"));
+    if (!title || !Number.isFinite(published)) return [];
+    return [
+      {
+        id: tag("guid") || link || title,
+        title,
+        publisher: "Yahoo Finance",
+        url: /^https?:\/\//.test(link) ? link : null,
+        publishedAt: new Date(published).toISOString(),
+        symbols: [symbol],
+        description: tag("description").replace(/<[^>]+>/g, "").slice(0, 280),
+      },
+    ];
+  });
+}
+const unavailableExpiry = (symbol: string, expiry: string) =>
+  httpError(404, `${symbol} has no listed option expiring ${expiry}, or it has already expired.`);
+/** Parses one Cboe delayed-quotes file; cached per symbol so changing expiry costs nothing. */
+async function cboeChain(symbol: string) {
+  return cached(`cboe:${symbol}`, 60000, async () => {
+    let d: any;
+    try {
+      d = await getJson(
+        `https://cdn.cboe.com/api/global/delayed_quotes/options/${encodeURIComponent(cboeSymbol(symbol))}.json`,
+      );
+    } catch (e) {
+      // Cboe answers 403/404 for symbols it does not list.
+      if ([403, 404].includes((e as { providerStatus?: number }).providerStatus ?? 0))
+        throw httpError(404, `Cboe has no delayed option chain for ${symbol}.`);
+      throw e;
+    }
+    const rows: OptionContract[] = (d.data?.options || []).flatMap((o: any) => {
+      const match = /^([A-Z0-9.]{1,7}?)(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/.exec(o.option || "");
+      if (!match) return [];
+      return [
+        {
+          ticker: o.option,
+          type: match[5] === "C" ? "call" : "put",
+          strike: Number(match[6]) / 1000,
+          expiry: `20${match[2]}-${match[3]}-${match[4]}`,
+          bid: nullable(o.bid),
+          ask: nullable(o.ask),
+          iv: positive(o.iv),
+          volume: nullable(o.volume),
+          openInterest: nullable(o.open_interest),
+          delta: nullable(o.delta),
+          multiplier: 100,
+          // Cboe gives no per-contract bid/ask quote time.
+          asOf: null,
+        } as OptionContract,
+      ];
+    });
+    return {
+      rows,
+      underlying: positive(d.data?.current_price),
+      snapshotGeneratedAt: cboeGeneratedAt(d.timestamp),
+    };
+  });
+}
+export async function options(symbol: string, expiry?: string): Promise<OptionChain> {
   const provider = marketStatus().provider;
+  // An expiry at or past 4 PM New York time is over, whatever a provider still lists.
+  if (expiry && !(daysToExpiry(expiry) > 0)) throw unavailableExpiry(symbol, expiry);
   if (provider === "demo") {
     const S = demoQuote(symbol).price!,
       expiries = [7, 14, 30, 60, 90].map((days) => {
@@ -363,87 +468,51 @@ export async function options(
         date.setUTCDate(date.getUTCDate() + ((5 - date.getUTCDay() + 7) % 7));
         return date.toISOString().slice(0, 10);
       });
+    if (expiry && !expiries.includes(expiry)) throw unavailableExpiry(symbol, expiry);
     const e = expiry || expiries[0],
       T = daysToExpiry(e) / 365,
       spacing = S > 200 ? 5 : 2.5,
       base = Math.round(S / spacing) * spacing;
-    const contracts = Array.from(
-      { length: 17 },
-      (_, i) => base + (i - 8) * spacing,
-    ).flatMap((strike, i) =>
-      (["call", "put"] as const).map((type) => {
-        const iv =
-            0.26 +
-            Math.abs(Math.log(strike / S)) * 0.5 +
-            (hash(symbol) % 12) / 100,
-          mid = bsmPrice(S, strike, T, 0.04, iv, 0.005, type),
-          greeks = bsmGreeks(S, strike, T, 0.04, iv, 0.005, type);
-        return {
-          ticker: `${symbol}-${e}-${type}-${strike}`,
-          type,
-          strike,
-          expiry: e,
-          bid: Math.max(0, mid - 0.08),
-          ask: mid + 0.08,
-          iv,
-          volume: Math.round(
-            150 + 4000 * Math.exp(-Math.abs(strike - S) / 15) + i * 39,
-          ),
-          openInterest: Math.round(
-            500 + 13000 * Math.exp(-Math.abs(strike - S) / 25),
-          ),
-          delta: greeks.delta,
-          multiplier: 100,
-          asOf: new Date().toISOString(),
-        };
-      }),
+    const contracts = Array.from({ length: 17 }, (_, i) => base + (i - 8) * spacing).flatMap(
+      (strike, i) =>
+        (["call", "put"] as const).map((type) => {
+          const iv = 0.26 + Math.abs(Math.log(strike / S)) * 0.5 + (hash(symbol) % 12) / 100,
+            mid = bsmPrice(S, strike, T, 0.04, iv, 0.005, type),
+            greeks = bsmGreeks(S, strike, T, 0.04, iv, 0.005, type);
+          return {
+            ticker: `${symbol}-${e}-${type}-${strike}`,
+            type,
+            strike,
+            expiry: e,
+            bid: Math.max(0, mid - 0.08),
+            ask: mid + 0.08,
+            iv,
+            volume: Math.round(150 + 4000 * Math.exp(-Math.abs(strike - S) / 15) + i * 39),
+            openInterest: Math.round(500 + 13000 * Math.exp(-Math.abs(strike - S) / 25)),
+            delta: greeks.delta,
+            multiplier: 100,
+            asOf: new Date().toISOString(),
+          };
+        }),
     );
-    return { contracts, expiries, truncated: false, source: "Simulated" };
+    return { contracts, expiries, truncated: false, source: "Simulated", underlying: S };
   }
-  if (provider === "yahoo")
-    return cached(`cboe:${symbol}:${expiry || ""}`, 60000, async () => {
-      const d = await getJson(
-        `https://cdn.cboe.com/api/global/delayed_quotes/options/${encodeURIComponent(symbol)}.json`,
-      );
-      const rows: OptionContract[] = (d.data?.options || []).flatMap(
-        (o: any) => {
-          const match =
-            /^([A-Z0-9.]{1,7}?)(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/.exec(
-              o.option || "",
-            );
-          if (!match) return [];
-          return [
-            {
-              ticker: o.option,
-              type: match[5] === "C" ? "call" : "put",
-              strike: Number(match[6]) / 1000,
-              expiry: `20${match[2]}-${match[3]}-${match[4]}`,
-              bid: nullable(o.bid),
-              ask: nullable(o.ask),
-              iv: nullable(o.iv) !== null && o.iv > 0 ? o.iv : null,
-              volume: nullable(o.volume),
-              openInterest: nullable(o.open_interest),
-              delta: nullable(o.delta),
-              multiplier: 100,
-              // Cboe gives no per-contract bid/ask quote time.
-              asOf: null,
-            } as OptionContract,
-          ];
-        },
-      );
-      const expiries = [
-        ...new Set(
-          rows.map((o) => o.expiry).filter((e) => daysToExpiry(e) > 0),
-        ),
+  if (provider === "yahoo") {
+    const chain = await cboeChain(symbol),
+      expiries = [
+        ...new Set(chain.rows.map((o) => o.expiry).filter((e) => daysToExpiry(e) > 0)),
       ].sort();
-      return {
-        contracts: rows.filter((o) => o.expiry === (expiry || expiries[0])),
-        expiries,
-        truncated: false,
-        source: "Cboe · 15-minute delayed",
-        snapshotGeneratedAt: cboeGeneratedAt(d.timestamp),
-      };
-    });
+    if (expiry && !expiries.includes(expiry)) throw unavailableExpiry(symbol, expiry);
+    const chosen = expiry || expiries[0];
+    return {
+      contracts: chain.rows.filter((o) => o.expiry === chosen),
+      expiries,
+      truncated: false,
+      source: "Cboe · 15-minute delayed",
+      snapshotGeneratedAt: chain.snapshotGeneratedAt,
+      underlying: chain.underlying,
+    };
+  }
   const chain = await cached(
     `options:${symbol}:${expiry || ""}`,
     30000,
@@ -452,13 +521,10 @@ export async function options(
         limit: "250",
         sort: "expiration_date",
         order: "asc",
-        "expiration_date.gte": new Date().toISOString().slice(0, 10),
+        "expiration_date.gte": newYorkDate(),
       };
       if (expiry) params.expiration_date = expiry;
-      let page = await massive(
-          `/v3/snapshot/options/${encodeURIComponent(symbol)}`,
-          params,
-        ),
+      let page = await massive(`/v3/snapshot/options/${encodeURIComponent(symbol)}`, params),
         all: any[] = [...(page.results || [])],
         n = 1;
       // Bound provider requests; explicitly disclose partial chain instead of hiding truncation.
@@ -482,12 +548,16 @@ export async function options(
         multiplier: o.details.shares_per_contract || 100,
         asOf: timestamp(o.last_quote?.last_updated),
       }));
-      const found = [...new Set(rows.map((o) => o.expiry))].sort();
+      // Today's contracts stop trading at 4 PM New York time; never default to an expired one.
+      const found = [...new Set(rows.map((o) => o.expiry))]
+        .filter((e) => daysToExpiry(e) > 0)
+        .sort();
       return {
         contracts: expiry ? rows : rows.filter((o) => o.expiry === found[0]),
         expiries: found,
         truncated: Boolean(page.next_url),
         source: "Massive",
+        underlying: positive(all[0]?.underlying_asset?.price),
       };
     },
   );

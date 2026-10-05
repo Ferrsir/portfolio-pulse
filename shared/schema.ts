@@ -5,7 +5,8 @@ export const symbolSchema = z
   .string()
   .trim()
   .toUpperCase()
-  .regex(/^[A-Z][A-Z0-9.\-^]{0,11}$/);
+  // Optional leading ^ for indexes (^GSPC); dots or dashes for share classes (BRK.B).
+  .regex(/^\^?[A-Z][A-Z0-9.\-]{0,11}$/);
 const amount = z.number().finite().min(0).max(1e12);
 export const portfolioSchema = z
   .object({

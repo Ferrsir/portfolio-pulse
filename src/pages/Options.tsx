@@ -8,7 +8,8 @@ import type {
 } from "../../shared/types";
 import { nearMoneyIV } from "../../shared/types";
 import { daysToExpiry } from "../../shared/pricing";
-import { api } from "../backend";
+import { api, ApiError } from "../backend";
+import { IMPLAUSIBLE_IV, midpoint } from "../optionMath";
 import { Card, Stat, Empty, Notice, Segmented, Delta } from "../ui";
 import { money, number, clock, expiryLabel } from "../format";
 type Props = {
@@ -20,10 +21,6 @@ type Props = {
   chooseContract: (c: OptionContract) => void;
 };
 const NEAR = 10; // strikes either side of the underlying price
-export const midpoint = (c: Pick<OptionContract, "bid" | "ask">) =>
-  c.bid !== null && c.ask !== null && c.bid >= 0 && c.ask > 0 && c.ask >= c.bid
-    ? (c.bid + c.ask) / 2
-    : null;
 export default function Options({
   status,
   symbols,
@@ -69,10 +66,16 @@ export default function Options({
         }));
       })
       .catch((e: Error) => {
-        if (e.name !== "AbortError") {
-          setChain(null);
-          setError(e.message);
+        if (e.name === "AbortError") return;
+        setChain(null);
+        // The chosen expiry ended (e.g. the page stayed open past 4 PM ET): fall back to the next.
+        if (expiry && e instanceof ApiError && e.status === 404) {
+          setChoices((prev) => ({ ...prev, expiries: prev.expiries.filter((x) => x !== expiry) }));
+          setExpiry("");
+          setError("");
+          return;
         }
+        setError(e.message);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -86,10 +89,14 @@ export default function Options({
     return () => clearInterval(timer);
   }, []);
   const quote = quotes.get(selected),
-    spot = quote?.price ?? null,
+    quoteSpot = quote?.price ?? null,
+    // The chain's own underlying price is as delayed as its options; prefer it for moneyness.
+    spot = chain?.underlying ?? quoteSpot,
     contracts = chain?.contracts || [],
     shownExpiry = expiry || contracts[0]?.expiry || "",
-    expiries = choices.symbol === selected ? choices.expiries : chain?.expiries || [];
+    expiries = (choices.symbol === selected ? choices.expiries : chain?.expiries || []).filter(
+      (e) => e === shownExpiry || daysToExpiry(e) > 0,
+    );
   const strikes = useMemo(
     () => [...new Set(contracts.map((c) => c.strike))].sort((a, b) => a - b),
     [chain],
@@ -207,8 +214,14 @@ export default function Options({
       <section className="kpis card" aria-label="Chain summary">
         <Stat
           label={`${selected || "Underlying"} price`}
-          value={money(spot)}
-          sub={<Delta value={spot === null ? null : quote?.changePercent} />}
+          value={money(quoteSpot)}
+          sub={
+            chain?.underlying != null && quoteSpot !== null ? (
+              <>Chain snapshot used {money(chain.underlying)}</>
+            ) : (
+              <Delta value={quoteSpot === null ? null : quote?.changePercent} />
+            )
+          }
         />
         <Stat
           label="Near-the-money IV"
@@ -295,7 +308,20 @@ export default function Options({
                       <td className="num">{money(c.bid)}</td>
                       <td className="num">{money(c.ask)}</td>
                       <td className="num">{money(midpoint(c))}</td>
-                      <td className="num">{c.iv !== null ? number(c.iv * 100, 1) + "%" : "—"}</td>
+                      <td className="num">
+                        {c.iv === null ? (
+                          "—"
+                        ) : c.iv > IMPLAUSIBLE_IV ? (
+                          <span
+                            className="muted"
+                            title="Implausibly high: usually a deep in- or out-of-the-money or expiring contract"
+                          >
+                            {number(c.iv * 100, 0)}%?
+                          </span>
+                        ) : (
+                          number(c.iv * 100, 1) + "%"
+                        )}
+                      </td>
                       <td className="num">{number(c.volume, 0)}</td>
                       <td className="num">{number(c.openInterest, 0)}</td>
                       <td className="num">{number(c.delta, 3)}</td>
@@ -319,8 +345,9 @@ export default function Options({
       </Card>
       <p className="footnote">
         Shaded rows are in the money; the outlined row is the strike nearest the underlying.
-        IV is annualized and comes from the provider, which may use a different model than
-        your BSM engine. {status?.provider === "demo" && "This chain is simulated."}
+        IV is annualized and comes from the provider, which may use a different model and
+        conventions than your European BSM engine; values above 300% are marked “?”.{" "}
+        {status?.provider === "demo" && "This chain is simulated."}
       </p>
     </>
   );

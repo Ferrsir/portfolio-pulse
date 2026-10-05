@@ -21,7 +21,7 @@ import {
 } from "../../shared/pricing";
 import { Card, Notice, Segmented, Badge, useChartColors } from "../ui";
 import { money, number, significant, marketClock, expiryLabel } from "../format";
-import { midpoint } from "./Options";
+import { midpoint, IMPLAUSIBLE_IV } from "../optionMath";
 type Props = {
   status: MarketStatus | null;
   symbols: string[];
@@ -32,6 +32,9 @@ type Props = {
   clearContract: () => void;
 };
 type SpotSource = "quote" | "manual";
+/** Provider IV worth copying: present, positive and not an extreme artefact. */
+const usableIV = (c: OptionContract | null) =>
+  c?.iv != null && c.iv > 0 && c.iv <= IMPLAUSIBLE_IV ? c.iv : null;
 const niceStrike = (spot: number) => {
   const step = spot >= 200 ? 5 : spot >= 50 ? 1 : 0.5;
   return Math.round(spot / step) * step;
@@ -51,7 +54,7 @@ export default function Pricing({
       strike: contract?.strike ?? (quotedSpot ? niceStrike(quotedSpot) : NaN),
       days: contract ? daysToExpiry(contract.expiry) : 30,
       rate: 0.04,
-      iv: contract?.iv && contract.iv > 0 ? contract.iv : 0.3,
+      iv: usableIV(contract) ?? 0.3,
       dividend: 0,
       type: contract?.type || "call",
       multiplier: contract?.multiplier || 100,
@@ -68,7 +71,7 @@ export default function Pricing({
       ...p,
       strike: contract.strike,
       days: daysToExpiry(contract.expiry),
-      iv: contract.iv && contract.iv > 0 ? contract.iv : p.iv,
+      iv: usableIV(contract) ?? p.iv,
       type: contract.type,
       multiplier: contract.multiplier,
     }));
@@ -162,9 +165,11 @@ export default function Pricing({
         >
           Linked to <b>{selected} {money(contract.strike)} {contract.type}</b>, expiring{" "}
           {expiryLabel(contract.expiry, daysToExpiry(contract.expiry))} (4:00 PM ET).{" "}
-          {contract.iv && contract.iv > 0
-            ? `Provider IV ${number(contract.iv * 100, 2)}% was copied into your IV.`
-            : "The provider gave no IV, so your IV is unchanged."}
+          {usableIV(contract) !== null
+            ? `Provider IV ${number(contract.iv! * 100, 2)}% was copied into your IV.`
+            : contract.iv
+              ? `Provider IV ${number(contract.iv * 100, 0)}% looks unreliable, so your IV is unchanged.`
+              : "The provider gave no IV, so your IV is unchanged."}
         </Notice>
       )}
       <div className="pricing-grid">

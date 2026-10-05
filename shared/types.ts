@@ -17,6 +17,8 @@ export type Quote = {
   changePercent: number | null;
   asOf: string | null;
   source: string;
+  /** When the server last fetched this quote from the provider (ISO UTC). */
+  fetchedAt?: string;
 };
 export type Bar = { time: string; close: number };
 export type NewsItem = {
@@ -56,6 +58,8 @@ export type OptionChain = {
   source: string;
   /** When the provider generated the whole chain snapshot (ISO UTC). Not a quote time. */
   snapshotGeneratedAt?: string | null;
+  /** The provider's underlying price for this snapshot, when it sends one. */
+  underlying?: number | null;
 };
 /** Average valid call/put IV at the strike nearest spot; unavailable without a spot price. */
 export function nearMoneyIV(

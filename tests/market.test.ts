@@ -1,6 +1,6 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { options, quotes, cboeGeneratedAt } from "../server/market";
+import { options, quotes, news, cboeGeneratedAt } from "../server/market";
 import { nearMoneyIV } from "../shared/types";
 import type { OptionContract } from "../shared/types";
 
@@ -161,4 +161,81 @@ test("Massive zeroed bars after the overnight reset are a missing price, not $0"
   assert.equal(zero.price, null);
   assert.equal(zero.change, null);
   assert.equal(late.price, 101.5, "falls through a zero minute bar to the day bar");
+});
+test("Expired or unlisted expiries are refused instead of returning a live-looking chain", async () => {
+  process.env.MARKET_PROVIDER = "yahoo";
+  const calls = mockFetch(() => ({
+    timestamp: "2026-10-05 18:41:52",
+    data: {
+      current_price: 101.25,
+      options: [
+        { option: "EXPX200117C00100000", bid: 1, ask: 1.2, iv: 0.3 },
+        { option: "EXPX991218C00100000", bid: 2, ask: 2.2, iv: 0.3 },
+        { option: "EXPX991218P00100000", bid: 2, ask: 2.3, iv: 7.9 },
+      ],
+    },
+  }));
+  const chain = await options("EXPX");
+  assert.deepEqual(chain.expiries, ["2099-12-18"], "expired 2020 contracts are not offered");
+  assert.equal(chain.underlying, 101.25);
+  await assert.rejects(options("EXPX", "2020-01-17"), /already expired/);
+  await assert.rejects(options("EXPX", "2099-12-19"), /no listed option/);
+  // Changing expiry reuses the one downloaded file.
+  await options("EXPX", "2099-12-18");
+  assert.equal(calls.length, 1);
+  process.env.MARKET_PROVIDER = "demo";
+  await assert.rejects(options("AAPL", "2099-01-01"), /no listed option/);
+});
+test("Cboe's 403 for an unknown symbol becomes a clear 404", async () => {
+  process.env.MARKET_PROVIDER = "yahoo";
+  globalThis.fetch = (async () => new Response("denied", { status: 403 })) as typeof fetch;
+  await assert.rejects(options("NOPEX"), (e: Error & { status?: number }) => {
+    assert.equal(e.status, 404);
+    assert.match(e.message, /no delayed option chain for NOPEX/);
+    return true;
+  });
+});
+test("Share classes use each provider's spelling", async () => {
+  process.env.MARKET_PROVIDER = "yahoo";
+  const calls = mockFetch((url) =>
+    url.hostname.includes("yahoo")
+      ? { chart: { result: [{ meta: { regularMarketPrice: 500, chartPreviousClose: 495 } }] } }
+      : { data: { options: [] } },
+  );
+  const [brk] = await quotes(["BRK.B"]);
+  assert.equal(brk.symbol, "BRK.B");
+  assert.equal(brk.price, 500);
+  assert.match(calls[0].pathname, /BRK-B$/);
+  await options("BRK-B").catch(() => {});
+  assert.match(calls[1].pathname, /BRK\.B\.json$/);
+});
+test("Massive never defaults to an expiry that has already ended", async () => {
+  process.env.MARKET_PROVIDER = "massive";
+  process.env.MASSIVE_API_KEY = "test-only";
+  mockFetch(() => ({
+    results: [massiveRow("2020-01-17", "call", 100), massiveRow("2099-03-20", "call", 100)],
+  }));
+  const chain = await options("OLDEXP");
+  assert.deepEqual(chain.expiries, ["2099-03-20"]);
+  assert.ok(chain.contracts.every((c) => c.expiry === "2099-03-20"));
+});
+test("Yahoo news falls back to the RSS feed when search returns nothing", async () => {
+  process.env.MARKET_PROVIDER = "yahoo";
+  globalThis.fetch = (async (input: string | URL) => {
+    const url = String(input);
+    if (url.includes("/search"))
+      return new Response(JSON.stringify({ news: [] }), { status: 200 });
+    return new Response(
+      `<rss><channel><item><title>Apple &amp; partners ship</title><link>https://finance.yahoo.com/x</link>` +
+        `<pubDate>Mon, 05 Oct 2026 16:29:04 +0000</pubDate><guid>g1</guid>` +
+        `<description><![CDATA[<p>Shares rose.</p>]]></description></item></channel></rss>`,
+      { status: 200 },
+    );
+  }) as typeof fetch;
+  const items = await news(["RSSX"]);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, "Apple & partners ship");
+  assert.equal(items[0].description, "Shares rose.");
+  assert.equal(items[0].publishedAt, "2026-10-05T16:29:04.000Z");
+  assert.deepEqual(items[0].symbols, ["RSSX"]);
 });

@@ -2,10 +2,8 @@ import express from "express";
 import type { Quote } from "../shared/types.js";
 import { symbolSchema } from "../shared/schema.js";
 import { quotes, history, news, options, marketStatus } from "./market.js";
-/** An error whose message is safe to show and whose status is a client error. */
-export function httpError(status: number, message: string) {
-  return Object.assign(new Error(message), { status });
-}
+import { httpError } from "./errors.js";
+export { httpError };
 export function parseSymbols(value: unknown) {
   const list = String(value || "")
     .split(",")
@@ -44,7 +42,13 @@ export function marketRouter({ onQuotes, cdn }: Options = {}) {
         data = await quotes(symbols);
       onQuotes?.(symbols, data);
       cache(res, cdn?.quotes);
-      res.json({ quotes: data, fetchedAt: new Date().toISOString() });
+      // Report when the provider was actually asked (server caches reuse data for up to a minute).
+      const fetchedAt =
+        data
+          .map((q) => q.fetchedAt)
+          .filter((t): t is string => Boolean(t))
+          .sort()[0] ?? new Date().toISOString();
+      res.json({ quotes: data, fetchedAt });
     } catch (e) {
       next(e);
     }
