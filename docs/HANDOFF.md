@@ -22,6 +22,10 @@ Second QA round on the new code (one agent driving the UI in a browser against a
 
 Verification: `npm test` (44 tests, incl. encryption round trip/tamper/cross-account, vault conflicts and CORS), `npm run check`, `npm run build` (no chunk warning). Deployed API smoke-tested from outside; UI checked in light/dark at desktop and 375px.
 
+Production verification (2026-10-05, against https://portfolio-pulse-api.vercel.app): live quotes with provider fetch time, news (10 headlines), 98-contract Cboe chain with underlying, expired expiry 404, BRK.B quote and options, vault preflight allowed for the site and refused for other origins (also `/api/Vault`), and an encrypted vault create → read/decrypt → update → stale-update 409 → fresh read → delete on the real Blob store. This found one production-only bug: Vercel's edge answered a successful create with 304 because the request used `If-None-Match: *` and Express sent an ETag; the app now uses `X-Pulse-Create` / `X-Pulse-If-Match` headers and the API sends no automatic ETags.
+
+Two self-test vaults from the failed runs remain in the Blob store (`users/v1/` and `vaults/v1/` objects created about 21:18–21:20 UTC on 2026-10-05, undecryptable ciphertext). `SYNC_MAX_ACCOUNTS` was raised to 7 to compensate; they can be deleted in the Vercel Blob browser.
+
 ## Intentional limits
 
 - Polling delayed public data is not real-time streaming. Holidays are not detected in the "regular session" label.

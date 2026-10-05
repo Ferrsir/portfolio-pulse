@@ -16,6 +16,8 @@ const isSiteOrigin = (origin: string) =>
   /^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?$/.test(origin);
 const app = express();
 app.disable("x-powered-by");
+// No automatic ETags: CDNs apply conditional-request rules to them (see server/vault.ts).
+app.set("etag", false);
 app.use((req, res, next) => {
   const origin = req.headers.origin || "",
     // Express matches routes case-insensitively, so this check must too (/api/Vault).
