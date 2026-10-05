@@ -4,6 +4,8 @@ import type { MarketStatus, NewsItem } from "../../shared/types";
 import { api } from "../backend";
 import { Card, Empty, Notice, Badge } from "../ui";
 import { ago } from "../format";
+/** The API's news limit (server/routes.ts NEWS_SYMBOL_LIMIT). */
+const NEWS_LIMIT = 20;
 export default function News({
   symbols,
   status,
@@ -31,7 +33,7 @@ export default function News({
     setError("");
     api<NewsItem[]>(
       "/news?symbols=" +
-        encodeURIComponent((filter === "ALL" ? symbols : [filter]).join(",")),
+        encodeURIComponent((filter === "ALL" ? symbols.slice(0, NEWS_LIMIT) : [filter]).join(",")),
       { signal: controller.signal },
     )
       .then(setItems)
@@ -84,6 +86,12 @@ export default function News({
       </div>
       {demo && (
         <Notice kind="warn">These headlines are fictional samples for the demo.</Notice>
+      )}
+      {filter === "ALL" && symbols.length > NEWS_LIMIT && (
+        <Notice>
+          “All” covers your first {NEWS_LIMIT} symbols (holdings first). Pick a symbol to see
+          its own headlines.
+        </Notice>
       )}
       <Card flush>
         {loading ? (

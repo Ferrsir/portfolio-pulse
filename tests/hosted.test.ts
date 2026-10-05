@@ -114,3 +114,30 @@ test("browser and synced stores save, detect stale tabs, and round-trip through 
     g.fetch = realFetch;
   }
 });
+test("mixed-case vault paths get the same origin gate", async () => {
+  const r = await fetch(`${origin}/api/Vault`, { headers: { Origin: "https://evil.example" } });
+  assert.equal(r.status, 403);
+  assert.equal(r.headers.get("access-control-allow-origin"), null);
+});
+test("symbol lists are canonical and news takes at most 20 symbols", async () => {
+  const { parseSymbols, NEWS_SYMBOL_LIMIT } = await import("../server/routes");
+  assert.deepEqual(parseSymbols("msft,AAPL,aapl"), ["AAPL", "MSFT"]);
+  assert.equal(NEWS_SYMBOL_LIMIT, 20);
+  const many = Array.from({ length: 21 }, (_, i) => `S${String.fromCharCode(65 + i)}`).join(",");
+  const r = await fetch(`${origin}/api/news?symbols=${many}`);
+  assert.equal(r.status, 400);
+});
+test("browser history never stores readable holdings, and sign-out removes synced history", async () => {
+  const { syncStore, rememberSession, forgetSession, browserStore } = await import("../src/backend");
+  const guest = browserStore(),
+    p = await guest.load();
+  guest.record!(1234, { ...p, positions: [{ symbol: "SECRETCO", shares: 7, costBasis: 99 }] }, "x");
+  assert.ok(![...memory.values()].some((v) => v.includes("SECRETCO")), "fingerprint leaked holdings");
+  const creds = { username: "leaver", token: "a".repeat(64), key: Buffer.alloc(32).toString("base64") };
+  rememberSession(creds);
+  syncStore(creds).record!(5, p, "x");
+  assert.ok(memory.has("pulse:snapshots:v1:sync:leaver"));
+  forgetSession();
+  assert.ok(!memory.has("pulse:session:v1"));
+  assert.ok(!memory.has("pulse:snapshots:v1:sync:leaver"));
+});

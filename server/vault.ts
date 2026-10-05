@@ -1,7 +1,7 @@
 import express from "express";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { httpError } from "./routes.js";
+import { httpError } from "./errors.js";
 /*
  * Synced portfolio storage for the hosted site.
  *
@@ -9,6 +9,10 @@ import { httpError } from "./routes.js";
  * an auth token it sends here, and an AES-GCM key it never sends. The server stores
  * only the encrypted envelope, at a path derived from username + auth token, so it
  * cannot read holdings and a wrong password simply finds no vault.
+ *
+ * Abuse limits: the first password to create a username claims it (others get 409),
+ * SYNC_ALLOWED_USERS limits which usernames may exist, and SYNC_MAX_ACCOUNTS caps how
+ * many usernames can ever be claimed.
  */
 export const vaultEnvelope = z.object({
   v: z.literal(1),
@@ -25,17 +29,22 @@ export type VaultStorage = {
   create(path: string, body: string): Promise<string>;
   /** Fails with a 409 unless the stored ETag still equals `etag`. */
   replace(path: string, body: string, etag: string): Promise<string>;
-  remove(path: string, etag: string): Promise<void>;
+  remove(path: string, etag?: string): Promise<void>;
+  /** Number of stored items whose path starts with `prefix`. */
+  count(prefix: string): Promise<number>;
 };
 const userPattern = /^[a-z0-9._-]{3,40}$/,
   tokenPattern = /^[0-9a-f]{64}$/;
-export function vaultPath(user: string, token: string) {
-  const id = createHash("sha256")
-    .update(`pulse-vault:v1:${user}:${token}`)
-    .digest("hex");
-  return `vaults/v1/${id}.json`;
-}
-function accountPath(req: express.Request) {
+const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+export const vaultPath = (user: string, token: string) =>
+  `vaults/v1/${sha256(`pulse-vault:v1:${user}:${token}`)}.json`;
+const claimPath = (user: string) => `users/v1/${sha256(`pulse-user:v1:${user}`)}.json`;
+const listEnv = (name: string) =>
+  (process.env[name] || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+function account(req: express.Request) {
   const user = String(req.headers["x-pulse-user"] || "")
       .trim()
       .toLowerCase(),
@@ -43,24 +52,41 @@ function accountPath(req: express.Request) {
     token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (!userPattern.test(user) || !tokenPattern.test(token))
     throw httpError(401, "Sign in again: the sync credentials are missing.");
-  const allowed = (process.env.SYNC_ALLOWED_USERS || "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
+  const allowed = listEnv("SYNC_ALLOWED_USERS");
   if (allowed.length && !allowed.includes(user))
     throw httpError(403, "Sync is limited to the site owner's accounts.");
-  return vaultPath(user, token);
+  return { user, token, path: vaultPath(user, token) };
 }
 const etagOf = (req: express.Request, header: string) => {
   const value = String(req.headers[header] || "").trim();
   return value && value.length <= 200 ? value : "";
 };
+/** Claims the username for this token, or confirms an existing claim by the same token. */
+async function claimUsername(storage: VaultStorage, user: string, token: string) {
+  const path = claimPath(user),
+    proof = sha256(`pulse-claim:v1:${token}`),
+    existing = await storage.read(path);
+  if (existing) {
+    if (JSON.parse(existing.body).proof !== proof)
+      throw httpError(409, "That username is already taken. Choose another one.");
+    return;
+  }
+  const max = Number(process.env.SYNC_MAX_ACCOUNTS);
+  if (Number.isFinite(max) && max > 0 && (await storage.count("users/v1/")) >= max)
+    throw httpError(403, "This site is not accepting new sync accounts.");
+  await storage.create(path, JSON.stringify({ proof })).catch(async (e) => {
+    // Lost a race with someone claiming the same name at the same moment.
+    const now = await storage.read(path);
+    if (now && JSON.parse(now.body).proof === proof) return;
+    throw e;
+  });
+}
 export function vaultRouter(storage: VaultStorage) {
   const router = express.Router();
   router.use(express.json({ limit: "512kb" }));
   router.get("/", async (req, res, next) => {
     try {
-      const found = await storage.read(accountPath(req));
+      const found = await storage.read(account(req).path);
       if (!found) {
         res.status(404).json({
           error: "No synced portfolio matches this username and password.",
@@ -76,7 +102,7 @@ export function vaultRouter(storage: VaultStorage) {
   });
   router.put("/", async (req, res, next) => {
     try {
-      const path = accountPath(req);
+      const { user, token, path } = account(req);
       if (!req.is("application/json")) throw httpError(415, "JSON required.");
       const parsed = vaultEnvelope.safeParse(req.body);
       if (!parsed.success)
@@ -86,6 +112,7 @@ export function vaultRouter(storage: VaultStorage) {
         create = etagOf(req, "if-none-match") === "*";
       if (!ifMatch && !create)
         throw httpError(428, "Send If-Match (update) or If-None-Match: * (create).");
+      if (create) await claimUsername(storage, user, token);
       const etag = create
         ? await storage.create(path, body)
         : await storage.replace(path, body, ifMatch);
@@ -98,9 +125,12 @@ export function vaultRouter(storage: VaultStorage) {
   });
   router.delete("/", async (req, res, next) => {
     try {
-      const ifMatch = etagOf(req, "if-match");
+      const { user, path } = account(req),
+        ifMatch = etagOf(req, "if-match");
       if (!ifMatch) throw httpError(428, "Send If-Match to delete.");
-      await storage.remove(accountPath(req), ifMatch);
+      await storage.remove(path, ifMatch);
+      // Free the username; the vault (the proof of the password) is already gone.
+      await storage.remove(claimPath(user)).catch(() => {});
       res.status(204).end();
     } catch (e) {
       next(e);
@@ -113,6 +143,8 @@ const conflict = () =>
     409,
     "Your synced portfolio changed on another device. Reload to get the latest version, then reapply your edit.",
   );
+const exists = () =>
+  httpError(409, "An account with this username and password already exists. Sign in instead.");
 /** In-memory storage for tests and for local trials without Blob credentials. */
 export function memoryVaultStorage(): VaultStorage {
   const items = new Map<string, { etag: string; body: string }>();
@@ -121,11 +153,7 @@ export function memoryVaultStorage(): VaultStorage {
   return {
     read: async (path) => items.get(path) ?? null,
     create: async (path, body) => {
-      if (items.has(path))
-        throw httpError(
-          409,
-          "An account with this username and password already exists. Sign in instead.",
-        );
+      if (items.has(path)) throw exists();
       const item = { etag: etag(), body };
       items.set(path, item);
       return item.etag;
@@ -137,9 +165,10 @@ export function memoryVaultStorage(): VaultStorage {
       return item.etag;
     },
     remove: async (path, expected) => {
-      if (items.get(path)?.etag !== expected) throw conflict();
+      if (expected !== undefined && items.get(path)?.etag !== expected) throw conflict();
       items.delete(path);
     },
+    count: async (prefix) => [...items.keys()].filter((k) => k.startsWith(prefix)).length,
   };
 }
 /** Private Vercel Blob storage (needs BLOB_READ_WRITE_TOKEN, set when a store is connected). */
@@ -151,37 +180,28 @@ export async function blobVaultStorage(): Promise<VaultStorage> {
     addRandomSuffix: false,
     cacheControlMaxAge: 60,
   };
+  const read = async (path: string) => {
+    // useCache: false reads origin storage, never a CDN copy up to a minute old.
+    const result = await blob.get(path, { access: "private", useCache: false });
+    if (!result || result.statusCode !== 200) return null;
+    return { etag: result.blob.etag, body: await new Response(result.stream).text() };
+  };
   return {
-    read: async (path) => {
-      const result = await blob.get(path, { access: "private" });
-      if (!result || result.statusCode !== 200) return null;
-      return {
-        etag: result.blob.etag,
-        body: await new Response(result.stream).text(),
-      };
-    },
+    read,
     create: async (path, body) => {
-      const existing = await blob.head(path).catch((e: unknown) => {
-        if (e instanceof blob.BlobNotFoundError) return null;
+      if (await read(path)) throw exists();
+      try {
+        return (await blob.put(path, body, { ...options, allowOverwrite: false })).etag;
+      } catch (e) {
+        // Someone created it between our check and the write.
+        if (await read(path).catch(() => null)) throw exists();
         throw e;
-      });
-      if (existing)
-        throw httpError(
-          409,
-          "An account with this username and password already exists. Sign in instead.",
-        );
-      return (await blob.put(path, body, { ...options, allowOverwrite: false }))
-        .etag;
+      }
     },
     replace: async (path, body, etag) => {
       try {
-        return (
-          await blob.put(path, body, {
-            ...options,
-            allowOverwrite: true,
-            ifMatch: etag,
-          })
-        ).etag;
+        return (await blob.put(path, body, { ...options, allowOverwrite: true, ifMatch: etag }))
+          .etag;
       } catch (e) {
         if (e instanceof blob.BlobPreconditionFailedError) throw conflict();
         throw e;
@@ -189,11 +209,21 @@ export async function blobVaultStorage(): Promise<VaultStorage> {
     },
     remove: async (path, etag) => {
       try {
-        await blob.del(path, { ifMatch: etag });
+        await blob.del(path, etag ? { ifMatch: etag } : {});
       } catch (e) {
         if (e instanceof blob.BlobPreconditionFailedError) throw conflict();
         throw e;
       }
+    },
+    count: async (prefix) => {
+      let total = 0,
+        cursor: string | undefined;
+      do {
+        const page = await blob.list({ prefix, cursor, limit: 1000 });
+        total += page.blobs.length;
+        cursor = page.hasMore ? page.cursor : undefined;
+      } while (cursor);
+      return total;
     },
   };
 }

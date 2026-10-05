@@ -203,11 +203,13 @@ test("Share classes use each provider's spelling", async () => {
       : { data: { options: [] } },
   );
   const [brk] = await quotes(["BRK.B"]);
+  await quotes(["VOD.L"]).catch(() => {});
   assert.equal(brk.symbol, "BRK.B");
   assert.equal(brk.price, 500);
   assert.match(calls[0].pathname, /BRK-B$/);
+  assert.match(calls[1].pathname, /\/VOD\.L$/, "exchange suffixes are not share classes");
   await options("BRK-B").catch(() => {});
-  assert.match(calls[1].pathname, /BRK\.B\.json$/);
+  assert.match(calls[2].pathname, /BRK\.B\.json$/);
 });
 test("Massive never defaults to an expiry that has already ended", async () => {
   process.env.MARKET_PROVIDER = "massive";

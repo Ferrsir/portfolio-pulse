@@ -103,12 +103,34 @@ async function getJson(url: string, headers: Record<string, string> = {}) {
     );
   return response.json() as Promise<any>;
 }
-// Share classes: people type BRK.B; Yahoo spells it BRK-B and Cboe BRK.B.
-const yahooSymbol = (s: string) => s.replace(/\.([A-Z])$/, "-$1");
-const cboeSymbol = (s: string) => s.replace(/-([A-Z])$/, ".$1");
+// US share classes: people type BRK.B; Yahoo spells it BRK-B and Cboe BRK.B. Only classes
+// A–C are mapped: one-letter exchange suffixes such as VOD.L or ABC.V must stay as typed.
+const yahooSymbol = (s: string) =>
+  s.replace(/^([A-Z]{1,5})\.([ABC])$/, "$1-$2");
+const cboeSymbol = (s: string) => s.replace(/^([A-Z]{1,5})-([ABC])$/, "$1.$2");
+/** Runs `fn` over `items` with at most `limit` provider calls in flight. */
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+) {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        results[i] = await fn(items[i]);
+      }
+    }),
+  );
+  return results;
+}
 /** Today's date in New York, where US options expire. */
 const newYorkDate = () =>
-  new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+  new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(
+    new Date(),
+  );
 export function marketStatus(): MarketStatus {
   const provider = process.env.MARKET_PROVIDER || "demo";
   return {
@@ -168,44 +190,42 @@ export async function quotes(symbols: string[]): Promise<Quote[]> {
   const provider = marketStatus().provider;
   if (provider === "demo") return symbols.map(demoQuote);
   if (provider === "yahoo")
-    return Promise.all(
-      symbols.map(async (symbol) => {
-        try {
-          const chart = await yahooChart(symbol),
-            m = chart.meta,
-            price = positive(m.regularMarketPrice),
-            previousClose = positive(m.chartPreviousClose ?? m.previousClose);
-          return {
-            symbol,
-            name: m.longName || m.shortName || names[symbol] || symbol,
-            price,
-            previousClose,
-            change:
-              price !== null && previousClose !== null
-                ? price - previousClose
-                : null,
-            changePercent:
-              price !== null && previousClose
-                ? 100 * (price / previousClose - 1)
-                : null,
-            asOf: timestamp(m.regularMarketTime),
-            source: "Yahoo · unofficial / delayed",
-            fetchedAt: chart.fetchedAt,
-          };
-        } catch {
-          return {
-            symbol,
-            name: names[symbol] || symbol,
-            price: null,
-            previousClose: null,
-            change: null,
-            changePercent: null,
-            asOf: null,
-            source: "Yahoo unavailable",
-          };
-        }
-      }),
-    );
+    return mapLimit(symbols, 6, async (symbol): Promise<Quote> => {
+      try {
+        const chart = await yahooChart(symbol),
+          m = chart.meta,
+          price = positive(m.regularMarketPrice),
+          previousClose = positive(m.chartPreviousClose ?? m.previousClose);
+        return {
+          symbol,
+          name: m.longName || m.shortName || names[symbol] || symbol,
+          price,
+          previousClose,
+          change:
+            price !== null && previousClose !== null
+              ? price - previousClose
+              : null,
+          changePercent:
+            price !== null && previousClose
+              ? 100 * (price / previousClose - 1)
+              : null,
+          asOf: timestamp(m.regularMarketTime),
+          source: "Yahoo · unofficial / delayed",
+          fetchedAt: chart.fetchedAt,
+        };
+      } catch {
+        return {
+          symbol,
+          name: names[symbol] || symbol,
+          price: null,
+          previousClose: null,
+          change: null,
+          changePercent: null,
+          asOf: null,
+          source: "Yahoo unavailable",
+        };
+      }
+    });
   return cached(`quotes:${symbols.join(",")}`, 12000, async () => {
     const fetchedAt = new Date().toISOString();
     const data = await massive(
@@ -219,7 +239,9 @@ export async function quotes(symbols: string[]): Promise<Quote[]> {
       const q = map.get(symbol),
         // After the provider's overnight reset, minute/day bars read 0: skip them, never value at $0.
         price =
-          positive(q?.lastTrade?.p) ?? positive(q?.min?.c) ?? positive(q?.day?.c),
+          positive(q?.lastTrade?.p) ??
+          positive(q?.min?.c) ??
+          positive(q?.day?.c),
         previousClose = positive(q?.prevDay?.c);
       return {
         symbol,
@@ -324,8 +346,10 @@ export async function news(symbols: string[]): Promise<NewsItem[]> {
       },
     ]);
   return cached(`news:${symbols.join(",")}`, 300000, async () => {
-    const groups = await Promise.all(
-      symbols.map(async (symbol) => {
+    const groups = await mapLimit(
+      symbols,
+      6,
+      async (symbol): Promise<NewsItem[]> => {
         if (provider === "yahoo") return yahooNews(symbol);
         const d = await massive("/v2/reference/news", {
           ticker: symbol,
@@ -342,7 +366,7 @@ export async function news(symbols: string[]): Promise<NewsItem[]> {
           symbols: n.tickers || [symbol],
           description: (n.description || "").slice(0, 280),
         }));
-      }),
+      },
     );
     return [
       ...new Map<string, NewsItem>(
@@ -369,14 +393,18 @@ async function yahooNews(symbol: string): Promise<NewsItem[]> {
       `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(ys)}&quotesCount=0&newsCount=6&region=US&lang=en-US`,
     );
     const items: NewsItem[] = (d.news || [])
-      .filter((n: any) => n.uuid && n.title && Number.isFinite(n.providerPublishTime))
+      .filter(
+        (n: any) => n.uuid && n.title && Number.isFinite(n.providerPublishTime),
+      )
       .map((n: any) => ({
         id: n.uuid,
         title: n.title,
         publisher: n.publisher || "Yahoo Finance",
         url: n.link || null,
         publishedAt: new Date(n.providerPublishTime * 1000).toISOString(),
-        symbols: (n.relatedTickers || [ys]).map((t: string) => (t === ys ? symbol : t)),
+        symbols: (n.relatedTickers || [ys]).map((t: string) =>
+          t === ys ? symbol : t,
+        ),
         description: "",
       }));
     if (items.length) return items;
@@ -386,35 +414,49 @@ async function yahooNews(symbol: string): Promise<NewsItem[]> {
   const response = await fetch(
     `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(ys)}&region=US&lang=en-US`,
     {
-      headers: { "User-Agent": "Mozilla/5.0 (PortfolioPulse; personal dashboard)" },
+      headers: {
+        "User-Agent": "Mozilla/5.0 (PortfolioPulse; personal dashboard)",
+      },
       signal: AbortSignal.timeout(15000),
     },
   );
   if (!response.ok)
-    throw new Error(`Market provider returned ${response.status} for Yahoo news.`);
+    throw new Error(
+      `Market provider returned ${response.status} for Yahoo news.`,
+    );
   const xml = await response.text();
-  return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, 8).flatMap(([, item]) => {
-    const tag = (name: string) =>
-      decodeXml(new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`).exec(item)?.[1] || "");
-    const title = tag("title"),
-      link = tag("link"),
-      published = Date.parse(tag("pubDate"));
-    if (!title || !Number.isFinite(published)) return [];
-    return [
-      {
-        id: tag("guid") || link || title,
-        title,
-        publisher: "Yahoo Finance",
-        url: /^https?:\/\//.test(link) ? link : null,
-        publishedAt: new Date(published).toISOString(),
-        symbols: [symbol],
-        description: tag("description").replace(/<[^>]+>/g, "").slice(0, 280),
-      },
-    ];
-  });
+  return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)]
+    .slice(0, 8)
+    .flatMap(([, item]) => {
+      const tag = (name: string) =>
+        decodeXml(
+          new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`).exec(item)?.[1] ||
+            "",
+        );
+      const title = tag("title"),
+        link = tag("link"),
+        published = Date.parse(tag("pubDate"));
+      if (!title || !Number.isFinite(published)) return [];
+      return [
+        {
+          id: tag("guid") || link || title,
+          title,
+          publisher: "Yahoo Finance",
+          url: /^https?:\/\//.test(link) ? link : null,
+          publishedAt: new Date(published).toISOString(),
+          symbols: [symbol],
+          description: tag("description")
+            .replace(/<[^>]+>/g, "")
+            .slice(0, 280),
+        },
+      ];
+    });
 }
 const unavailableExpiry = (symbol: string, expiry: string) =>
-  httpError(404, `${symbol} has no listed option expiring ${expiry}, or it has already expired.`);
+  httpError(
+    404,
+    `${symbol} has no listed option expiring ${expiry}, or it has already expired.`,
+  );
 /** Parses one Cboe delayed-quotes file; cached per symbol so changing expiry costs nothing. */
 async function cboeChain(symbol: string) {
   return cached(`cboe:${symbol}`, 60000, async () => {
@@ -425,12 +467,19 @@ async function cboeChain(symbol: string) {
       );
     } catch (e) {
       // Cboe answers 403/404 for symbols it does not list.
-      if ([403, 404].includes((e as { providerStatus?: number }).providerStatus ?? 0))
+      if (
+        [403, 404].includes(
+          (e as { providerStatus?: number }).providerStatus ?? 0,
+        )
+      )
         throw httpError(404, `Cboe has no delayed option chain for ${symbol}.`);
       throw e;
     }
     const rows: OptionContract[] = (d.data?.options || []).flatMap((o: any) => {
-      const match = /^([A-Z0-9.]{1,7}?)(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/.exec(o.option || "");
+      const match =
+        /^([A-Z0-9.]{1,7}?)(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/.exec(
+          o.option || "",
+        );
       if (!match) return [];
       return [
         {
@@ -457,10 +506,14 @@ async function cboeChain(symbol: string) {
     };
   });
 }
-export async function options(symbol: string, expiry?: string): Promise<OptionChain> {
+export async function options(
+  symbol: string,
+  expiry?: string,
+): Promise<OptionChain> {
   const provider = marketStatus().provider;
   // An expiry at or past 4 PM New York time is over, whatever a provider still lists.
-  if (expiry && !(daysToExpiry(expiry) > 0)) throw unavailableExpiry(symbol, expiry);
+  if (expiry && !(daysToExpiry(expiry) > 0))
+    throw unavailableExpiry(symbol, expiry);
   if (provider === "demo") {
     const S = demoQuote(symbol).price!,
       expiries = [7, 14, 30, 60, 90].map((days) => {
@@ -468,41 +521,60 @@ export async function options(symbol: string, expiry?: string): Promise<OptionCh
         date.setUTCDate(date.getUTCDate() + ((5 - date.getUTCDay() + 7) % 7));
         return date.toISOString().slice(0, 10);
       });
-    if (expiry && !expiries.includes(expiry)) throw unavailableExpiry(symbol, expiry);
+    if (expiry && !expiries.includes(expiry))
+      throw unavailableExpiry(symbol, expiry);
     const e = expiry || expiries[0],
       T = daysToExpiry(e) / 365,
       spacing = S > 200 ? 5 : 2.5,
       base = Math.round(S / spacing) * spacing;
-    const contracts = Array.from({ length: 17 }, (_, i) => base + (i - 8) * spacing).flatMap(
-      (strike, i) =>
-        (["call", "put"] as const).map((type) => {
-          const iv = 0.26 + Math.abs(Math.log(strike / S)) * 0.5 + (hash(symbol) % 12) / 100,
-            mid = bsmPrice(S, strike, T, 0.04, iv, 0.005, type),
-            greeks = bsmGreeks(S, strike, T, 0.04, iv, 0.005, type);
-          return {
-            ticker: `${symbol}-${e}-${type}-${strike}`,
-            type,
-            strike,
-            expiry: e,
-            bid: Math.max(0, mid - 0.08),
-            ask: mid + 0.08,
-            iv,
-            volume: Math.round(150 + 4000 * Math.exp(-Math.abs(strike - S) / 15) + i * 39),
-            openInterest: Math.round(500 + 13000 * Math.exp(-Math.abs(strike - S) / 25)),
-            delta: greeks.delta,
-            multiplier: 100,
-            asOf: new Date().toISOString(),
-          };
-        }),
+    const contracts = Array.from(
+      { length: 17 },
+      (_, i) => base + (i - 8) * spacing,
+    ).flatMap((strike, i) =>
+      (["call", "put"] as const).map((type) => {
+        const iv =
+            0.26 +
+            Math.abs(Math.log(strike / S)) * 0.5 +
+            (hash(symbol) % 12) / 100,
+          mid = bsmPrice(S, strike, T, 0.04, iv, 0.005, type),
+          greeks = bsmGreeks(S, strike, T, 0.04, iv, 0.005, type);
+        return {
+          ticker: `${symbol}-${e}-${type}-${strike}`,
+          type,
+          strike,
+          expiry: e,
+          bid: Math.max(0, mid - 0.08),
+          ask: mid + 0.08,
+          iv,
+          volume: Math.round(
+            150 + 4000 * Math.exp(-Math.abs(strike - S) / 15) + i * 39,
+          ),
+          openInterest: Math.round(
+            500 + 13000 * Math.exp(-Math.abs(strike - S) / 25),
+          ),
+          delta: greeks.delta,
+          multiplier: 100,
+          asOf: new Date().toISOString(),
+        };
+      }),
     );
-    return { contracts, expiries, truncated: false, source: "Simulated", underlying: S };
+    return {
+      contracts,
+      expiries,
+      truncated: false,
+      source: "Simulated",
+      underlying: S,
+    };
   }
   if (provider === "yahoo") {
     const chain = await cboeChain(symbol),
       expiries = [
-        ...new Set(chain.rows.map((o) => o.expiry).filter((e) => daysToExpiry(e) > 0)),
+        ...new Set(
+          chain.rows.map((o) => o.expiry).filter((e) => daysToExpiry(e) > 0),
+        ),
       ].sort();
-    if (expiry && !expiries.includes(expiry)) throw unavailableExpiry(symbol, expiry);
+    if (expiry && !expiries.includes(expiry))
+      throw unavailableExpiry(symbol, expiry);
     const chosen = expiry || expiries[0];
     return {
       contracts: chain.rows.filter((o) => o.expiry === chosen),
@@ -524,7 +596,10 @@ export async function options(symbol: string, expiry?: string): Promise<OptionCh
         "expiration_date.gte": newYorkDate(),
       };
       if (expiry) params.expiration_date = expiry;
-      let page = await massive(`/v3/snapshot/options/${encodeURIComponent(symbol)}`, params),
+      let page = await massive(
+          `/v3/snapshot/options/${encodeURIComponent(symbol)}`,
+          params,
+        ),
         all: any[] = [...(page.results || [])],
         n = 1;
       // Bound provider requests; explicitly disclose partial chain instead of hiding truncation.

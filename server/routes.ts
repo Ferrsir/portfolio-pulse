@@ -4,14 +4,17 @@ import { symbolSchema } from "../shared/schema.js";
 import { quotes, history, news, options, marketStatus } from "./market.js";
 import { httpError } from "./errors.js";
 export { httpError };
-export function parseSymbols(value: unknown) {
+/** Validated, de-duplicated and sorted, so reordering a request cannot dodge the caches. */
+export function parseSymbols(value: unknown, max = 150) {
   const list = String(value || "")
     .split(",")
     .filter(Boolean);
-  if (!list.length || list.length > 150)
-    throw httpError(400, "Request between 1 and 150 symbols.");
-  return [...new Set(list.map((s) => symbolSchema.parse(s)))];
+  if (!list.length || list.length > max)
+    throw httpError(400, `Request between 1 and ${max} symbols.`);
+  return [...new Set(list.map((s) => symbolSchema.parse(s)))].sort();
 }
+/** News costs one or two provider calls per symbol, so it takes fewer at a time. */
+export const NEWS_SYMBOL_LIMIT = 20;
 export const chartRanges = ["1D", "1W", "1M", "3M", "1Y"];
 /** A real YYYY-MM-DD date (rejects 2026-13-99 and 2026-02-30). */
 export function isCalendarDate(value: string) {
@@ -67,7 +70,7 @@ export function marketRouter({ onQuotes, cdn }: Options = {}) {
   });
   router.get("/news", async (req, res, next) => {
     try {
-      const items = await news(parseSymbols(req.query.symbols));
+      const items = await news(parseSymbols(req.query.symbols, NEWS_SYMBOL_LIMIT));
       cache(res, cdn?.news);
       res.json(items);
     } catch (e) {

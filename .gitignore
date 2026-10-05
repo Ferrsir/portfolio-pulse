@@ -10,3 +10,5 @@ coverage/
 pulse-portfolio*.json
 claude-install.ps1
 .DS_Store
+.playwright-mcp/
+.claude/launch.json

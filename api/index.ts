@@ -18,7 +18,8 @@ const app = express();
 app.disable("x-powered-by");
 app.use((req, res, next) => {
   const origin = req.headers.origin || "",
-    vault = req.path.startsWith("/api/vault");
+    // Express matches routes case-insensitively, so this check must too (/api/Vault).
+    vault = req.path.toLowerCase().startsWith("/api/vault");
   if (!vault) {
     // Public market data: no cookies or credentials, so any origin may read it.
     res.setHeader("Access-Control-Allow-Origin", "*");

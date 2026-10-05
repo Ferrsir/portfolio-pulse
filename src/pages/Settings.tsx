@@ -47,7 +47,7 @@ export default function Settings({
   onSignOut,
 }: Props) {
   const [message, setMessage] = useState(""),
-    [imported, setImported] = useState<Portfolio | null>(null),
+    [imported, setImported] = useState<(Portfolio & { previewOf: number }) | null>(null),
     [confirmClear, setConfirmClear] = useState(false);
   const exportData = () => {
     const url = URL.createObjectURL(
@@ -79,7 +79,8 @@ export default function Settings({
       } catch {
         throw new Error("This file is not valid JSON.");
       }
-      setImported(parseExport(raw));
+      // Remember which version the preview compared against.
+      setImported({ ...parseExport(raw), previewOf: portfolio.revision });
     } catch (e) {
       setMessage((e as Error).message);
     }
@@ -189,7 +190,14 @@ export default function Settings({
                 <button
                   className="button primary"
                   onClick={() =>
-                    void update((p) => ({ ...imported, revision: p.revision }))
+                    void update((p) => {
+                      if (p.revision !== imported.previewOf)
+                        throw new Error(
+                          "Your portfolio changed after this preview. Choose the file again to compare with the latest version.",
+                        );
+                      const { previewOf: _, ...next } = imported;
+                      return { ...next, revision: p.revision };
+                    })
                       .then(() => {
                         setImported(null);
                         setMessage("Backup imported.");
@@ -224,7 +232,12 @@ export default function Settings({
           title="Market data"
           subtitle={status ? `${status.recency} · quotes refresh every ${number(status.pollMs / 1000, 0)} s while visible` : "Connecting…"}
         >
-          {HOSTED ? (
+          {HOSTED && status?.provider === "demo" ? (
+            <p>
+              The Pulse API at <code>{API_BASE.replace(/^https?:\/\//, "")}</code> is serving
+              simulated data for previews.
+            </p>
+          ) : HOSTED ? (
             <p>
               Quotes, charts and news come from Yahoo Finance and option chains from Cboe,
               through the Pulse API at <code>{API_BASE.replace(/^https?:\/\//, "")}</code>. Both

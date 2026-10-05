@@ -154,3 +154,41 @@ test("vault paths depend on both username and token", () => {
   assert.notEqual(vaultPath("a", t), vaultPath("a", "b".repeat(64)));
   assert.match(vaultPath("a", t), /^vaults\/v1\/[0-9a-f]{64}\.json$/);
 });
+test("vault: usernames are claimed by the first password, can be capped, and free on delete", async () => {
+  const owner = await deriveCredentials("claimer", "owner password 1", fast),
+    squatter = await deriveCredentials("claimer", "someone else pw", fast),
+    put = (c: typeof owner, headers: Record<string, string>, body: string) =>
+      fetch(base, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${c.token}`,
+          "X-Pulse-User": c.username,
+          "Content-Type": "application/json",
+          ...headers,
+        },
+        body,
+      });
+  const body = JSON.stringify(await encryptPortfolio(owner, samplePortfolio));
+  let r = await put(owner, { "If-None-Match": "*" }, body);
+  assert.equal(r.status, 200);
+  const etag = (await r.json()).etag;
+  r = await put(squatter, { "If-None-Match": "*" }, body);
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /already taken/);
+  // Cap: with one claimed name already, a cap of 1 refuses a new username.
+  process.env.SYNC_MAX_ACCOUNTS = "1";
+  try {
+    const stranger = await deriveCredentials("stranger", "stranger password", fast);
+    r = await put(stranger, { "If-None-Match": "*" }, body);
+    assert.equal(r.status, 403);
+  } finally {
+    delete process.env.SYNC_MAX_ACCOUNTS;
+  }
+  r = await fetch(base, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${owner.token}`, "X-Pulse-User": "claimer", "If-Match": etag },
+  });
+  assert.equal(r.status, 204);
+  r = await put(squatter, { "If-None-Match": "*" }, body);
+  assert.equal(r.status, 200, "a deleted account frees its username");
+});

@@ -103,8 +103,19 @@ type SnapshotFile = {
 };
 const MAX_POINTS = 10_000,
   RETENTION_MS = 90 * 86_400_000;
-// Holdings or cash edits change what is measured, so they start a new series.
-const fingerprint = (p: Portfolio) => JSON.stringify([p.positions, p.cash]);
+// Holdings or cash edits change what is measured, so they start a new series. Stored as a
+// hash so the history key never holds a readable copy of the holdings.
+function fingerprint(p: Portfolio) {
+  const text = JSON.stringify([p.positions, p.cash]);
+  let a = 0x811c9dc5,
+    b = 0x01000193;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193);
+    b = Math.imul(b ^ c, 0x5bd1e995);
+  }
+  return (a >>> 0).toString(16).padStart(8, "0") + (b >>> 0).toString(16).padStart(8, "0");
+}
 function browserSnapshots(key: string) {
   const read = (): SnapshotFile | null => {
     try {
@@ -215,7 +226,12 @@ export function savedSession(): SyncCredentials | null {
 }
 export const rememberSession = (c: SyncCredentials) =>
   storage.set(SESSION_KEY, JSON.stringify(c));
-export const forgetSession = () => storage.remove(SESSION_KEY);
+/** Signing out removes the keys and this account's per-device history from the browser. */
+export function forgetSession() {
+  const session = savedSession();
+  storage.remove(SESSION_KEY);
+  if (session) storage.remove(`pulse:snapshots:v1:sync:${session.username}`);
+}
 const vaultHeaders = (c: SyncCredentials) => ({
   Authorization: `Bearer ${c.token}`,
   "X-Pulse-User": c.username,

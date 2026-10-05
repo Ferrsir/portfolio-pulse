@@ -142,6 +142,8 @@ export default function App() {
   /* ---------- portfolio ---------- */
   useEffect(() => {
     let alive = true;
+    // Until the new store loads, nothing may be saved or recorded against it.
+    latest.current = null;
     setPortfolio(null);
     setLoadError("");
     store
